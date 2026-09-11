@@ -1,0 +1,6 @@
+dependencies {
+    implementation project(':auth-api')
+    // TODO: apply/configure the NeoForge ModDevGradle/NeoGradle plugin using the official 1.21.1 MDK.
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+}

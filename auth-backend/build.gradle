@@ -1,0 +1,97 @@
+plugins {
+    id 'application'
+}
+
+dependencies {
+    implementation project(':auth-api')
+    implementation 'org.xerial:sqlite-jdbc:3.51.1.1'
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.20.0'
+    implementation 'org.bouncycastle:bcprov-jdk18on:1.84'
+
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+application {
+    mainClass = 'dev.example.mcauth.backend.BackendApplication'
+}
+
+def generatedBuildInfoDir = layout.buildDirectory.dir('generated/build-info')
+def generatedReleaseDir = layout.buildDirectory.dir('generated/release-metadata')
+def applicationVersionValue = project.version.toString()
+def gitCommitProvider = providers.environmentVariable('GIT_COMMIT').orElse('unknown')
+def migrationIndex = file('src/main/resources/db/migration/migrations.txt')
+def schemaVersions = migrationIndex.readLines('UTF-8')
+        .collect { it.trim() }
+        .findAll { !it.isBlank() && !it.startsWith('#') }
+        .collect { line ->
+            def matcher = line =~ /^V([0-9]+)__[A-Za-z0-9_]+\.sql$/
+            if (!matcher.matches()) throw new GradleException("Invalid migration entry: ${line}")
+            matcher.group(1).toInteger()
+        }
+def maximumSchemaVersion = schemaVersions.max()
+
+def generateBuildMetadata = tasks.register('generateBuildMetadata') {
+    def buildInfoFile = generatedBuildInfoDir.map { it.file('build-info.properties') }
+    def releaseFile = generatedReleaseDir.map { it.file('release.properties') }
+    inputs.property('applicationVersion', applicationVersionValue)
+    inputs.property('gitCommit', gitCommitProvider)
+    inputs.file(migrationIndex)
+    inputs.property('maximumSchemaVersion', maximumSchemaVersion)
+    outputs.files(buildInfoFile, releaseFile)
+    outputs.upToDateWhen { false }
+    doLast {
+        String versionValue = applicationVersionValue
+        String commitValue = gitCommitProvider.get()
+                .replaceAll('[^A-Za-z0-9._-]', '')
+        if (commitValue.isBlank()) commitValue = 'unknown'
+        String buildTimeValue = java.time.Instant.now().toString()
+        String metadata = """application.name=minecraft-auth-backend
+application.version=${versionValue}
+git.commit=${commitValue}
+build.time=${buildTimeValue}
+min.schema.version=0
+max.schema.version=${maximumSchemaVersion}
+"""
+        buildInfoFile.get().asFile.tap {
+            parentFile.mkdirs()
+            setText(metadata, 'UTF-8')
+        }
+        releaseFile.get().asFile.tap {
+            parentFile.mkdirs()
+            setText(metadata, 'UTF-8')
+        }
+    }
+}
+
+sourceSets.main.resources.srcDir(generatedBuildInfoDir)
+tasks.named('processResources').configure { dependsOn(generateBuildMetadata) }
+
+distributions {
+    main {
+        contents {
+            from(generatedReleaseDir) {
+                include 'release.properties'
+            }
+        }
+    }
+}
+
+tasks.named('installDist').configure { dependsOn(generateBuildMetadata) }
+tasks.named('distTar').configure { dependsOn(generateBuildMetadata) }
+tasks.named('distZip').configure { dependsOn(generateBuildMetadata) }
+
+tasks.register('deploymentArchive', Tar) {
+    dependsOn(tasks.named('installDist'))
+    group = 'distribution'
+    description = 'Creates an SFTP-ready backend archive containing bin, lib, and release metadata.'
+    compression = org.gradle.api.tasks.bundling.Compression.GZIP
+    archiveFileName = "auth-backend-${applicationVersionValue}.tar.gz"
+    destinationDirectory = layout.buildDirectory.dir('distributions')
+    from(layout.buildDirectory.dir('install/auth-backend')) {
+        include 'bin/**'
+        include 'lib/**'
+        include 'release.properties'
+    }
+}
