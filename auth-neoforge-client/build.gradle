@@ -1,6 +1,40 @@
+plugins {
+    id 'net.neoforged.moddev'
+}
+
+base {
+    archivesName = 'mctgauth-client'
+}
+
+neoForge {
+    version = project.neoforge_version
+    addModdingDependenciesTo sourceSets.test
+    runs {
+        client {
+            client()
+        }
+    }
+    mods {
+        mctgauth_client {
+            sourceSet sourceSets.main
+            sourceSet project(':auth-neoforge-protocol').sourceSets.main
+        }
+    }
+}
+
 dependencies {
     implementation project(':auth-api')
-    // TODO: apply/configure the NeoForge ModDevGradle/NeoGradle plugin using the official 1.21.1 MDK.
+    compileOnly project(':auth-neoforge-protocol')
+    testImplementation project(':auth-neoforge-protocol')
+    jarJar project(':auth-api')
+    implementation jarJar('org.bouncycastle:bcprov-jdk18on:1.84')
+    additionalRuntimeClasspath 'org.bouncycastle:bcprov-jdk18on:1.84'
+
     testImplementation platform('org.junit:junit-bom:5.11.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+jar {
+    from project(':auth-neoforge-protocol').sourceSets.main.output
 }

@@ -1,87 +1,93 @@
-# Minecraft Telegram Auth
+# MCTGAuth
 
-Starter repository for a Minecraft 1.21.1 NeoForge authentication system integrated with a Telegram bot and ticket-based administration workflow.
+[Русская версия](README_RU.md)
 
-## Status
+MCTGAuth is a Java 21 authentication and support system for Minecraft 1.21.1 on NeoForge 21.1.244. A Telegram bot manages registration, account ownership, tickets, moderation, and password rotation; separate client and dedicated-server mods perform replay-resistant login without transmitting the plaintext password.
 
-Backend Phase 2 is implemented: button-oriented Telegram user/admin menus, registration and support tickets, attachment references and conversation history, multiple-account approval, password rotation, moderator workflows/search/statistics, ordered SQLite migrations, authenticated synchronization APIs, and a typed remote-command queue. The NeoForge authentication protocol and both runtime mod integrations remain scaffolded.
+Current version: **0.4.1**.
 
-## Development environment
+## Architecture
 
-- Java: JDK 21 (64-bit)
-- IDE: Visual Studio Code
-- Build system: Gradle Wrapper
-- Minecraft: 1.21.1
-- Mod loader/API: NeoForge
-- Backend host: separate European VPS
-- Backend persistence: SQLite initially
-- Minecraft server persistence: local SQLite/cache, independent of backend availability
-- Telegram update transport: long polling initially
-
-NeoForge 1.21.1 requires Java 21. VS Code is usable even though NeoForge's documentation primarily highlights IDEs with integrated Gradle support.
-
-## First setup
-
-1. Install a 64-bit JDK 21.
-2. Install the recommended VS Code extensions from `.vscode/extensions.json`.
-3. Start from the official NeoForge 1.21.1 MDK and pin the chosen NeoForge version in `gradle.properties`.
-4. Configure the two NeoForge module build files using the MDK as the source of truth.
-5. Copy `.env.example` to a secure deployment environment. Never commit real tokens.
-6. Run `./gradlew build`.
-
-## Run the backend
-
-Create a bot with BotFather, add it to a private administration group, and obtain the group's numeric chat ID. Supply secrets through environment variables; the application does not read or commit a `.env` file.
-
-PowerShell example:
-
-```powershell
-$env:TELEGRAM_BOT_TOKEN = '<bot-token>'
-$env:TELEGRAM_ADMIN_CHAT_ID = '-1000000000000'
-$env:MODERATOR_TELEGRAM_IDS = '123456789,987654321'
-$env:AUTH_DATABASE_PATH = '.\data\auth-backend.db'
-$env:HOW_TO_PLAY_URL = 'https://t.me/example/1'
-$env:HTTP_BIND_ADDRESS = '127.0.0.1'
-$env:HTTP_PORT = '8080'
-$env:AUTH_API_TOKEN = '<at-least-32-random-characters>'
-$env:SERVER_ID = 'survival-main'
-$env:ADMIN_LOCALE = 'ru'
-$env:DEFAULT_USER_LOCALE = 'en'
-.\gradlew.bat :auth-backend:run
+```mermaid
+flowchart TD
+    U[Telegram user] --> B[auth-backend Telegram bot]
+    B --> D[(Authoritative SQLite database)]
+    D --> E[Versioned sync events]
+    E -->|outbound authenticated HTTPS polling| S[MCTGAuth Server]
+    S --> C[(Local atomic authentication cache)]
+    P[MCTGAuth Client] <-->|versioned challenge-response| S
 ```
 
-Users send `/start` in a private chat, select English or Russian, and can later change the choice in Settings. Submitted tickets are persisted before the bot posts their admin cards. `ADMIN_LOCALE` independently controls the shared administration group. Only Telegram numeric IDs in `MODERATOR_TELEGRAM_IDS` can approve or reject a registration.
+- `auth-backend` is authoritative for Telegram identities, moderators, tickets, Minecraft-account ownership, credentials, audit history, sync events, and typed remote commands.
+- `auth-neoforge-server` polls the backend over outbound HTTPS, keeps the minimum local verifier cache, quarantines unauthenticated players, and validates login proofs.
+- `auth-neoforge-client` stores the user-entered password locally and derives the nonce-bound proof off the render thread.
+- Minecraft never calls the Telegram API and never reads the backend SQLite database.
+- During a backend outage, management and new synchronization stop, but accounts already committed to the server cache remain login-capable.
 
-Telegram menu documentation is under `docs/telegram/`. HTTP API details are in `docs/api/SYNC_API.md` and `docs/api/REMOTE_COMMAND_API.md`.
+The client password is intentionally stored as plaintext in its dedicated local JSON configuration. The backend and Minecraft server never store that plaintext. No component may log passwords, API tokens, Authorization headers, verifier material, or reusable proofs.
 
 ## Modules
 
-### `auth-api`
-Pure Java shared contracts and domain types. It must not depend on Telegram, Minecraft, NeoForge, SQLite, or an HTTP framework. Put stable DTOs, enums, service interfaces, event schemas, and validation contracts here.
+| Module | Responsibility | Documentation |
+| --- | --- | --- |
+| `auth-api` | Framework-independent domain and synchronization types. | [Project structure](docs/PROJECT_STRUCTURE.md) |
+| `auth-backend` | Telegram bot, SQLite authority, moderation, audit, sync and health API. | [English](auth-backend/README.md) · [Russian](auth-backend/README_RU.md) |
+| `auth-neoforge-protocol` | Safe wire payloads, compatibility constants, verifier parsing, and proof primitives. | [Protocol](docs/AUTH_PROTOCOL.md) |
+| `auth-neoforge-server` | Dedicated-server enforcement, cache, backend polling, and operator commands. | [English](auth-neoforge-server/README.md) · [Russian](auth-neoforge-server/README_RU.md) |
+| `auth-neoforge-client` | Settings UI, local credential storage, and automatic authentication. | [English](auth-neoforge-client/README.md) · [Russian](auth-neoforge-client/README_RU.md) |
 
-### `auth-backend`
-Standalone Java 21 application deployed to the VPS. Owns Telegram interaction, ticket workflows, moderator actions, the authoritative user/account registry, audit history, backend SQLite database, and the HTTPS synchronization API consumed by Minecraft.
+## Authentication flow
 
-See [`auth-backend/README.md`](auth-backend/README.md) for local and Debian VPS installation instructions. A [Russian version](auth-backend/README_RU.md) is also available.
+1. A user submits a registration or additional-account ticket in Telegram.
+2. An authorized moderator, identified by numeric Telegram ID, approves it.
+3. The backend creates an Argon2id verifier and a versioned sync event. The generated plaintext is delivered only to the user.
+4. MCTGAuth Server durably applies the event to `mctgauth/accounts.json`, then acknowledges it.
+5. Client and server negotiate protocol version 1. The server issues a one-use session and nonce; the client derives a key locally and returns a context-bound HMAC proof.
+6. The server consumes the challenge, validates identity and credential version, and releases the player only after success.
 
-Production release management scripts and their Russian operator guide are under [`deploy/vps/`](deploy/vps/README.md).
+See the [authentication protocol](docs/AUTH_PROTOCOL.md) and [end-to-end flow](docs/MCTGAUTH_AUTH_FLOW.md).
 
-### `auth-neoforge-server`
-Server-side NeoForge mod. Owns local authentication state, local credential verifier cache, whitelist synchronization, authentication timeout/restrictions, client-server authentication protocol, and outbound synchronization with `auth-backend`. Existing registered players must still be able to authenticate when the VPS is unavailable.
+## Requirements and development
 
-### `auth-neoforge-client`
-Client-side NeoForge mod. Owns password entry/settings UI, local credential storage abstraction, and the client side of the authentication protocol. Do not store plaintext passwords in ordinary NeoForge TOML configuration.
+- 64-bit JDK 21
+- Minecraft 1.21.1
+- NeoForge 21.1.244
+- Git and the included Gradle Wrapper; global Gradle is not required
+
+```powershell
+java -version
+.\gradlew.bat clean test
+.\gradlew.bat build
+```
+
+On Linux/macOS use `./gradlew`. For backend development, copy the examples from `.env.example` into process environment variables; the application does not load `.env` automatically. Never commit real values.
+
+## Release artifacts
+
+```text
+auth-backend/build/distributions/auth-backend-0.4.1.tar.gz
+auth-neoforge-server/build/libs/mctgauth-server-0.4.1.jar
+auth-neoforge-client/build/libs/mctgauth-client-0.4.1.jar
+```
+
+```powershell
+.\gradlew.bat :auth-backend:deploymentArchive :auth-neoforge-server:build :auth-neoforge-client:build
+```
+
+Generated binaries belong in release assets, not in the source commit.
 
 ## Documentation
 
-Start with `docs/PROJECT_LOGIC.md` and `docs/PROJECT_STRUCTURE.md`. `docs/database/SCHEMA.md` defines the intended data model; `docs/flows/` contains the major state machines; `docs/api/SYNC_API.md` defines the backend-to-Minecraft synchronization boundary.
+- [Documentation index](docs/README.md) · [Russian index](docs/README_RU.md)
+- [Architecture and ownership](docs/PROJECT_LOGIC.md)
+- [Security model](docs/architecture/SECURITY_MODEL.md)
+- [Backend](auth-backend/README.md)
+- [Production deployment](docs/deployment/DEPLOYMENT.md)
+- [Troubleshooting](docs/troubleshooting/TROUBLESHOOTING.md)
 
-## Codex
+## Current limitations
 
-`AGENTS.md` contains durable repository rules. Repo-local skills are stored under `.agents/skills/` so implementation sessions can load detailed workflows only when relevant.
-
-## Remote administration channel
-
-The administrative Telegram interface may enqueue a restricted set of typed remote commands for Minecraft servers, for example forcing an authentication sync, requesting sync status, or resynchronizing one player. The backend never opens an interactive shell or forwards arbitrary command text.
-
-Minecraft continues to initiate all communication: the server polls the backend for pending commands over authenticated HTTPS, executes only locally registered handlers, and posts a structured result. See `docs/api/REMOTE_COMMAND_API.md` and `docs/architecture/REMOTE_COMMAND_SECURITY.md`.
+- The backend listener is loopback-only; production HTTPS must terminate at a trusted reverse proxy.
+- `/mcauth resync <name>` and `/mcauth reload` are explicit unsupported stubs. The typed `RESYNC_PLAYER` remote handler is also currently non-operational because the sync API has no single-account snapshot endpoint.
+- No automatic reconnect loop runs after a terminal client authentication failure; reconnect manually after fixing the cause.
+- Licensed/online-mode versus offline-mode UUID policy is not yet finalized for deployments that depend on UUID identity changes.

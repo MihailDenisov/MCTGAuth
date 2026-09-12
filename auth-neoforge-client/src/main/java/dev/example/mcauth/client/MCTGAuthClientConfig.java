@@ -1,0 +1,110 @@
+package dev.example.mcauth.client;
+
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.util.Objects;
+
+/** Client-only plaintext credential configuration. Password values are never logged. */
+public final class MCTGAuthClientConfig {
+    public static final int SCHEMA_VERSION = 1;
+    public static final String FILE_NAME = "mctgauth-client.json";
+
+    private final Path path;
+    private String password = "";
+    private boolean autoAuthenticate = true;
+
+    public MCTGAuthClientConfig(Path path) {
+        this.path = Objects.requireNonNull(path, "path").toAbsolutePath().normalize();
+    }
+
+    public synchronized void load() {
+        if (!Files.exists(path)) {
+            password = "";
+            autoAuthenticate = true;
+            return;
+        }
+        try {
+            JsonObject root = JsonParser.parseString(Files.readString(path, StandardCharsets.UTF_8)).getAsJsonObject();
+            if (!root.has("schemaVersion") || root.get("schemaVersion").getAsInt() != SCHEMA_VERSION) {
+                throw new IllegalStateException("Unsupported MCTGAuth client configuration schema");
+            }
+            String loadedPassword = root.has("password") ? root.get("password").getAsString() : "";
+            if (loadedPassword.length() > 256) throw new IllegalStateException("MCTGAuth password is too long");
+            password = loadedPassword;
+            autoAuthenticate = !root.has("autoAuthenticate") || root.get("autoAuthenticate").getAsBoolean();
+        } catch (IOException | RuntimeException exception) {
+            throw new IllegalStateException("MCTGAuth client configuration cannot be loaded", exception);
+        }
+    }
+
+    public synchronized Snapshot snapshot() {
+        return new Snapshot(password, autoAuthenticate);
+    }
+
+    public synchronized void save(String newPassword, boolean newAutoAuthenticate) {
+        Objects.requireNonNull(newPassword, "newPassword");
+        if (newPassword.length() > 256) throw new IllegalArgumentException("MCTGAuth password is too long");
+        JsonObject root = new JsonObject();
+        root.addProperty("schemaVersion", SCHEMA_VERSION);
+        root.addProperty("password", newPassword);
+        root.addProperty("autoAuthenticate", newAutoAuthenticate);
+        byte[] encoded = root.toString().getBytes(StandardCharsets.UTF_8);
+        Path temporary = path.resolveSibling(path.getFileName() + ".tmp");
+        try {
+            Files.createDirectories(path.getParent());
+            try (FileChannel channel = FileChannel.open(temporary, StandardOpenOption.CREATE,
+                    StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)) {
+                ByteBuffer buffer = ByteBuffer.wrap(encoded);
+                while (buffer.hasRemaining()) channel.write(buffer);
+                channel.force(true);
+            }
+            try {
+                Files.move(temporary, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException ignored) {
+                Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING);
+            }
+            password = newPassword;
+            autoAuthenticate = newAutoAuthenticate;
+        } catch (IOException exception) {
+            throw new IllegalStateException("MCTGAuth client configuration cannot be saved", exception);
+        } finally {
+            java.util.Arrays.fill(encoded, (byte) 0);
+            try {
+                Files.deleteIfExists(temporary);
+            } catch (IOException ignored) {
+                // A failed temporary-file cleanup is retried by the next save.
+            }
+        }
+    }
+
+    public Path path() {
+        return path;
+    }
+
+    public static final class Snapshot {
+        private final String password;
+        private final boolean autoAuthenticate;
+
+        private Snapshot(String password, boolean autoAuthenticate) {
+            this.password = password;
+            this.autoAuthenticate = autoAuthenticate;
+        }
+
+        public String password() { return password; }
+        public boolean autoAuthenticate() { return autoAuthenticate; }
+
+        @Override public String toString() {
+            return "Snapshot[password=<redacted>, autoAuthenticate=" + autoAuthenticate + "]";
+        }
+    }
+}

@@ -132,3 +132,11 @@ The backend is deployed as immutable releases under `/opt/minecraft-auth/release
 Every update validates the uploaded archive, Java version, release layout, and database-schema compatibility, then creates and integrity-checks an SQLite online backup before stopping the service. Activation succeeds only after the systemd service passes its loopback health check. Failed activation automatically restores the previous application release without silently replacing the database.
 
 Rollback changes application code only and refuses a release whose declared maximum schema is older than the current database unless an operator explicitly overrides the guard after reviewing migrations. Database restoration is a separate confirmed operation that creates an emergency backup first. Update, rollback, restore, and cleanup operations share a lock and record non-secret deployment outcomes.
+
+## 17. Telegram UI and moderator interaction state
+
+Version 0.3 introduced, and version 0.4.1 retains, `/menu`, `/adm`, and `/cancel` in private chats plus `/menu@BotUsername` and `/adm@BotUsername` in the configured administration group. Chat ID selects presentation context and locale; enabled moderator identity and every privileged authorization decision use the sender's numeric Telegram ID.
+
+Free-form moderator input is private. When a moderator starts Reply from a shared group card, the backend persists a moderator-specific expiring action and completes it only from the same enabled, assigned moderator's private chat. Translated labels never become business identifiers. All wizard/submenu views provide localized escape navigation, and violation reports may persist a null offender nickname.
+
+Version 0.4 makes `/menu` and the localized Main menu action always return to the ordinary user-facing menu in private chat, including for moderators; `/adm` remains the administrative entry point. Moderator account search can open one authoritative account record and disable or enable it with dedicated permission checks, audit records, and `ACCOUNT_DISABLED` / `ACCOUNT_ENABLED` sync events. Disable requires an optional-reason step and a separate explicit confirmation. Telegram timestamp rendering is centralized on `Europe/Moscow`; database timestamps and expiry calculations remain UTC-based.

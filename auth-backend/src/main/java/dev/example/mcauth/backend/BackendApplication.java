@@ -5,7 +5,6 @@ import dev.example.mcauth.backend.telegram.i18n.LocaleResolver;
 import dev.example.mcauth.backend.telegram.i18n.LocalizationService;
 
 import java.time.Clock;
-import java.time.ZoneOffset;
 import java.util.concurrent.CountDownLatch;
 
 /** Standalone Java 21 entry point for Telegram bot, ticket service, persistence and sync HTTP API. */
@@ -30,13 +29,15 @@ public final class BackendApplication {
                 database, moderators, credentials, syncEvents, audit, clock);
         RemoteCommandService remoteCommands = new RemoteCommandService(
                 database, moderators, audit, json, clock, config.serverId());
-        LocalizationService localization = new LocalizationService(ZoneOffset.UTC);
+        ModeratorPendingActionService pendingModeratorActions =
+                new ModeratorPendingActionService(database, moderators, clock);
+        LocalizationService localization = new LocalizationService();
         LocaleResolver locales = new LocaleResolver(
                 database, config.adminLocale(), config.defaultUserLocale());
         TelegramBotService bot = new TelegramBotService(
-                config.telegramBotToken(), config.telegramAdminChatId(), config.howToPlayUrl(),
+                config.telegramBotToken(), config.telegramBotUsername(), config.telegramAdminChatId(), config.howToPlayUrl(),
                 config.serverId(), tickets, supportTickets, accounts, moderators, remoteCommands,
-                localization, locales, json);
+                pendingModeratorActions, localization, locales, json);
         BackendHttpServer http = new BackendHttpServer(
                 config.httpBindAddress(), config.httpPort(), config.authApiToken(), database,
                 bot::isRunning, new SyncApiService(syncEvents, config.serverId()), remoteCommands, json);

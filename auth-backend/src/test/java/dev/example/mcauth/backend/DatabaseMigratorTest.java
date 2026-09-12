@@ -17,10 +17,12 @@ class DatabaseMigratorTest {
     void appliesMigrationsInOrderAndDoesNotReapplyThem() throws Exception {
         Path path = temporaryDirectory.resolve("migrations.db");
         try (BackendDatabase database = BackendDatabase.open(path)) {
-            assertEquals("1:initial,2:backend_phase_2,3:user_locale", migrations(database));
+            assertEquals("1:initial,2:backend_phase_2,3:user_locale,4:telegram_workflow_fixes",
+                    migrations(database));
         }
         try (BackendDatabase database = BackendDatabase.open(path)) {
-            assertEquals("1:initial,2:backend_phase_2,3:user_locale", migrations(database));
+            assertEquals("1:initial,2:backend_phase_2,3:user_locale,4:telegram_workflow_fixes",
+                    migrations(database));
         }
     }
 

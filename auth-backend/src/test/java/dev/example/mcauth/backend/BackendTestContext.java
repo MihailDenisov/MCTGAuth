@@ -18,6 +18,7 @@ final class BackendTestContext implements AutoCloseable {
     final TicketService registrations;
     final SupportTicketService tickets;
     final RemoteCommandService commands;
+    final ModeratorPendingActionService pendingModeratorActions;
 
     BackendTestContext(Path databasePath) throws Exception {
         this.database = BackendDatabase.open(databasePath);
@@ -32,6 +33,7 @@ final class BackendTestContext implements AutoCloseable {
         this.registrations = new TicketService(database, moderators, credentials, json, clock);
         this.tickets = new SupportTicketService(database, moderators, credentials, syncEvents, audit, clock);
         this.commands = new RemoteCommandService(database, moderators, audit, json, clock, "survival-main");
+        this.pendingModeratorActions = new ModeratorPendingActionService(database, moderators, clock);
     }
 
     long register(long telegramId, String nickname) {

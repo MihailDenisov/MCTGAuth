@@ -7,4 +7,4 @@ pluginManagement {
 }
 
 rootProject.name = 'minecraft-telegram-auth'
-include 'auth-api', 'auth-backend', 'auth-neoforge-server', 'auth-neoforge-client'
+include 'auth-api', 'auth-backend', 'auth-neoforge-protocol', 'auth-neoforge-server', 'auth-neoforge-client'

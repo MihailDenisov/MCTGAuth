@@ -1,0 +1,23 @@
+{
+  "mctgauth.settings.title": "MCTGAuth Settings",
+  "mctgauth.settings.button": "MCTGAuth",
+  "mctgauth.settings.password": "Password",
+  "mctgauth.settings.show_password": "Show password",
+  "mctgauth.settings.hide_password": "Hide password",
+  "mctgauth.settings.auto_authenticate": "Automatic authentication: %s",
+  "mctgauth.settings.storage_warning": "The MCTGAuth password is stored locally on this computer. Do not share your Minecraft configuration folder.",
+  "mctgauth.action.save": "Save",
+  "mctgauth.action.cancel": "Cancel",
+  "mctgauth.action.save_authenticate": "Save and authenticate",
+  "mctgauth.action.disconnect": "Disconnect",
+  "mctgauth.auth.password_required": "This server requires MCTGAuth authentication. Enter the password issued by the Telegram bot.",
+  "mctgauth.auth.stored_rejected": "Stored MCTGAuth password was rejected. Check the password issued by the Telegram bot.",
+  "mctgauth.auth.success": "MCTGAuth: authenticated.",
+  "mctgauth.error.invalid_credentials": "Authentication failed. Check your credentials.",
+  "mctgauth.error.timeout": "MCTGAuth authentication timed out. Use Reconnect manually when you are ready.",
+  "mctgauth.error.protocol_mismatch": "Incompatible MCTGAuth Client version.",
+  "mctgauth.error.mod_required": "This server requires MCTGAuth Client. Install the required mod and reconnect.",
+  "mctgauth.error.account_disabled": "Your account is disabled. Contact the server administration.",
+  "mctgauth.error.account_not_synchronized": "Your account has not been synchronized with this server yet.\n\nWait for synchronization to complete or contact an administrator.",
+  "mctgauth.error.internal": "Server authentication is temporarily unavailable."
+}

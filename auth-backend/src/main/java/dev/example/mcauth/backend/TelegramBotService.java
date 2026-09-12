@@ -16,6 +16,7 @@ public final class TelegramBotService implements AutoCloseable {
 
     public TelegramBotService(
             String botToken,
+            String botUsername,
             long adminChatId,
             String howToPlayUrl,
             String serverId,
@@ -24,16 +25,18 @@ public final class TelegramBotService implements AutoCloseable {
             AccountService accounts,
             ModeratorService moderators,
             RemoteCommandService remoteCommands,
+            ModeratorPendingActionService pendingModeratorActions,
             LocalizationService localization,
             LocaleResolver locales,
             ObjectMapper json) {
-        this(new TelegramApiClient(botToken, json), adminChatId, howToPlayUrl, serverId,
+        this(new TelegramApiClient(botToken, json), botUsername, adminChatId, howToPlayUrl, serverId,
                 registrationTickets, supportTickets, accounts, moderators, remoteCommands,
-                localization, locales, json);
+                pendingModeratorActions, localization, locales, json);
     }
 
     TelegramBotService(
             TelegramClient telegram,
+            String botUsername,
             long adminChatId,
             String howToPlayUrl,
             String serverId,
@@ -42,13 +45,14 @@ public final class TelegramBotService implements AutoCloseable {
             AccountService accounts,
             ModeratorService moderators,
             RemoteCommandService remoteCommands,
+            ModeratorPendingActionService pendingModeratorActions,
             LocalizationService localization,
             LocaleResolver locales,
             ObjectMapper json) {
         this.telegram = Objects.requireNonNull(telegram, "telegram");
-        this.router = new TelegramUpdateRouter(telegram, adminChatId, howToPlayUrl, serverId,
+        this.router = new TelegramUpdateRouter(telegram, botUsername, adminChatId, howToPlayUrl, serverId,
                 registrationTickets, supportTickets, accounts, moderators, remoteCommands,
-                localization, locales, json);
+                pendingModeratorActions, localization, locales, json);
     }
 
     public void start() {

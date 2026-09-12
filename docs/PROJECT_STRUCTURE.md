@@ -43,6 +43,8 @@ Keep dependencies pointing inward: NeoForge and backend modules may depend on `a
 
 Telegram localization lives under `dev.example.mcauth.backend.telegram.i18n`, while UTF-8 translations live in `auth-backend/src/main/resources/i18n`. Handlers operate on stable `BotAction` and callback identifiers. Locale resolution and persistence remain backend concerns and do not enter `auth-api`.
 
+Version 0.3 introduced `ModeratorPendingActionService` in `auth-backend`; version 0.4.1 retains it as the owner of expiring moderator private-input state persisted by migration V004. Telegram group cards remain projections, and no Telegram interaction state crosses into `auth-api` or either NeoForge module.
+
 `auth-api` contains framework-independent sync-event and remote-command enums/records. It remains free of Telegram, HTTP, JDBC, SQLite, Minecraft, and NeoForge dependencies.
 
 ## Remote command additions

@@ -124,6 +124,116 @@ public final class AccountService {
         });
     }
 
+    public List<AccountView> search(ModeratorIdentity moderator, String query) {
+        requirePhaseTwoServices();
+        String value = query == null ? "" : query.strip();
+        if (value.isEmpty() || value.length() > 100) throw invalid("Invalid account search query");
+        String normalized = value.toLowerCase(Locale.ROOT);
+        Long numeric = parsePositiveLong(value);
+        return database.transaction(connection -> {
+            moderators.requirePermission(connection, moderator, ModeratorPermission.TICKET_VIEW);
+            List<AccountView> results = new ArrayList<>();
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    SELECT m.id, m.owner_telegram_id, m.nickname, m.licensed, m.enabled,
+                           m.creation_method, m.credential_version, m.created_at
+                    FROM minecraft_accounts m
+                    LEFT JOIN users u ON u.telegram_id = m.owner_telegram_id
+                    WHERE m.normalized_nickname LIKE ? ESCAPE '\\'
+                       OR lower(u.username_snapshot) LIKE ? ESCAPE '\\'
+                       OR (? IS NOT NULL AND (m.id = ? OR m.owner_telegram_id = ?))
+                    ORDER BY m.id
+                    LIMIT 20
+                    """)) {
+                String like = "%" + escapeLike(normalized) + "%";
+                statement.setString(1, like);
+                statement.setString(2, like);
+                if (numeric == null) {
+                    statement.setNull(3, java.sql.Types.BIGINT);
+                    statement.setNull(4, java.sql.Types.BIGINT);
+                    statement.setNull(5, java.sql.Types.BIGINT);
+                } else {
+                    statement.setLong(3, numeric);
+                    statement.setLong(4, numeric);
+                    statement.setLong(5, numeric);
+                }
+                try (ResultSet result = statement.executeQuery()) {
+                    while (result.next()) results.add(mapAccount(result));
+                }
+            }
+            return List.copyOf(results);
+        });
+    }
+
+    public AccountView accountForModerator(ModeratorIdentity moderator, long accountId) {
+        requirePhaseTwoServices();
+        return database.transaction(connection -> {
+            moderators.requirePermission(connection, moderator, ModeratorPermission.TICKET_VIEW);
+            return requireAccount(connection, accountId);
+        });
+    }
+
+    public AccountStateChangeResult disable(
+            ModeratorIdentity moderator, long accountId, String reason) {
+        return setEnabled(moderator, accountId, false, reason);
+    }
+
+    public AccountStateChangeResult enable(
+            ModeratorIdentity moderator, long accountId, String reason) {
+        return setEnabled(moderator, accountId, true, reason);
+    }
+
+    private AccountStateChangeResult setEnabled(
+            ModeratorIdentity moderator, long accountId, boolean enabled, String reason) {
+        requirePhaseTwoServices();
+        String safeReason = reason == null ? "" : reason.strip();
+        if (safeReason.length() > 500) throw invalid("Account state reason is too long");
+        return database.transaction(connection -> {
+            moderators.requirePermission(connection, moderator,
+                    enabled ? ModeratorPermission.ACCOUNT_ENABLE : ModeratorPermission.ACCOUNT_DISABLE);
+            AccountView account = requireAccount(connection, accountId);
+            Instant now = Instant.now(clock);
+            if (account.enabled() == enabled) {
+                return new AccountStateChangeResult(account, false, now);
+            }
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    UPDATE minecraft_accounts SET enabled = ?, updated_at = ?
+                    WHERE id = ? AND enabled = ?
+                    """)) {
+                statement.setInt(1, enabled ? 1 : 0);
+                statement.setString(2, now.toString());
+                statement.setLong(3, accountId);
+                statement.setInt(4, enabled ? 0 : 1);
+                if (statement.executeUpdate() != 1) {
+                    throw new WorkflowException(WorkflowException.Code.INVALID_STATE,
+                            "Minecraft account state changed concurrently");
+                }
+            }
+            SyncEventType eventType = enabled
+                    ? SyncEventType.ACCOUNT_ENABLED : SyncEventType.ACCOUNT_DISABLED;
+            syncEvents.enqueue(connection, eventType, Map.of("accountId", accountId), accountId,
+                    moderator.telegramId(), moderator.usernameSnapshot(), now);
+            audit.record(connection, eventType.name(), null, accountId, moderator.telegramId(),
+                    moderator.usernameSnapshot(), now,
+                    Map.of("minecraftNickname", account.nickname(), "reason", safeReason));
+            AccountView changed = new AccountView(account.id(), account.ownerTelegramId(), account.nickname(),
+                    account.licensed(), enabled, account.creationMethod(), account.credentialVersion(),
+                    account.createdAt());
+            return new AccountStateChangeResult(changed, true, now);
+        });
+    }
+
+    public String telegramUsername(long telegramId) {
+        return database.transaction(connection -> {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "SELECT username_snapshot FROM users WHERE telegram_id = ?")) {
+                statement.setLong(1, telegramId);
+                try (ResultSet result = statement.executeQuery()) {
+                    return result.next() ? result.getString(1) : "";
+                }
+            }
+        });
+    }
+
     public CredentialIssueResult changePassword(long ownerTelegramId, long accountId) {
         requirePhaseTwoServices();
         return database.transaction(connection -> {
@@ -202,6 +312,22 @@ public final class AccountService {
                     throw new WorkflowException(WorkflowException.Code.NOT_FOUND,
                             "Minecraft account was not found");
                 }
+                return mapAccount(result);
+            }
+        }
+    }
+
+    private static AccountView requireAccount(Connection connection, long accountId) throws SQLException {
+        if (accountId <= 0) throw invalid("Minecraft account ID must be positive");
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT id, owner_telegram_id, nickname, licensed, enabled, creation_method,
+                       credential_version, created_at
+                FROM minecraft_accounts WHERE id = ?
+                """)) {
+            statement.setLong(1, accountId);
+            try (ResultSet result = statement.executeQuery()) {
+                if (!result.next()) throw new WorkflowException(
+                        WorkflowException.Code.NOT_FOUND, "Minecraft account was not found");
                 return mapAccount(result);
             }
         }
@@ -311,6 +437,19 @@ public final class AccountService {
             throw invalid("Minecraft nickname must contain 3-16 letters, digits, or underscores");
         }
         return value;
+    }
+
+    private static Long parsePositiveLong(String value) {
+        try {
+            long parsed = Long.parseLong(value);
+            return parsed > 0 ? parsed : null;
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    private static String escapeLike(String value) {
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
     }
 
     private static void enforcePasswordRateLimit(Connection connection, long accountId, Instant now)

@@ -36,13 +36,13 @@ class BackendHttpServerTest {
             assertEquals(200, health.statusCode());
             assertEquals("ok", json.readTree(health.body()).path("database").asText());
             assertEquals("stopped", json.readTree(health.body()).path("telegram").asText());
-            assertEquals(3, json.readTree(health.body()).path("schemaVersion").asInt());
+            assertEquals(4, json.readTree(health.body()).path("schemaVersion").asInt());
 
             HttpResponse<String> version = send("GET", base + "/version", null, null);
             assertEquals(200, version.statusCode());
             assertEquals("minecraft-auth-backend",
                     json.readTree(version.body()).path("application").asText());
-            assertEquals(3, json.readTree(version.body()).path("schemaVersion").asInt());
+            assertEquals(4, json.readTree(version.body()).path("schemaVersion").asInt());
 
             assertEquals(401, send("GET", base + "/api/v1/server/events?server_id=survival-main", null, null).statusCode());
             HttpResponse<String> pending = send("GET", base + "/api/v1/server/events?server_id=survival-main", TOKEN, null);

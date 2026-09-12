@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TicketServiceTest {
     private static final long MODERATOR_ID = 1001L;
+    private static final long OTHER_MODERATOR_ID = 1002L;
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-09-11T10:15:30Z"), ZoneOffset.UTC);
 
     @TempDir
@@ -34,7 +35,7 @@ class TicketServiceTest {
     void setUp() throws Exception {
         database = BackendDatabase.open(temporaryDirectory.resolve("test.db"));
         ModeratorService moderators = new ModeratorService(database, CLOCK);
-        moderators.synchronizeConfiguredModerators(Set.of(MODERATOR_ID));
+        moderators.synchronizeConfiguredModerators(Set.of(MODERATOR_ID, OTHER_MODERATOR_ID));
         tickets = new TicketService(
                 database, moderators, new CredentialService(), new ObjectMapper(), CLOCK);
     }
@@ -103,6 +104,28 @@ class TicketServiceTest {
             assertEquals(0, count(connection, "ticket_decisions"));
             return null;
         });
+    }
+
+    @Test
+    void moderatorCannotDecideRegistrationAssignedToAnotherModerator() {
+        long ticketId = tickets.submitRegistration(registration(2010L, "AssignedPlayer"));
+        database.transaction(connection -> {
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    UPDATE tickets SET status = 'IN_PROGRESS', assigned_moderator_telegram_id = ?
+                    WHERE id = ?
+                    """)) {
+                statement.setLong(1, MODERATOR_ID);
+                statement.setLong(2, ticketId);
+                statement.executeUpdate();
+            }
+            return null;
+        });
+
+        WorkflowException exception = assertThrows(WorkflowException.class,
+                () -> tickets.approveRegistration(ticketId,
+                        new ModeratorIdentity(OTHER_MODERATOR_ID, "other_mod")));
+
+        assertEquals(WorkflowException.Code.UNAUTHORIZED, exception.code());
     }
 
     @Test

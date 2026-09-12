@@ -23,6 +23,7 @@ public final class MenuActionRouter {
         LABEL_KEYS.put(BotAction.CHANGE_PASSWORD, MessageKey.MENU_CHANGE_PASSWORD);
         LABEL_KEYS.put(BotAction.NEW_TICKETS, MessageKey.MENU_NEW_TICKETS);
         LABEL_KEYS.put(BotAction.IN_PROGRESS, MessageKey.MENU_IN_PROGRESS);
+        LABEL_KEYS.put(BotAction.MY_ASSIGNED, MessageKey.MENU_MY_ASSIGNED);
         LABEL_KEYS.put(BotAction.REGISTRATIONS, MessageKey.MENU_REGISTRATIONS);
         LABEL_KEYS.put(BotAction.PROBLEMS, MessageKey.MENU_PROBLEMS);
         LABEL_KEYS.put(BotAction.VIOLATIONS, MessageKey.MENU_VIOLATIONS);
@@ -35,9 +36,13 @@ public final class MenuActionRouter {
         LABEL_KEYS.put(BotAction.RESYNC_PLAYER, MessageKey.MENU_RESYNC_PLAYER);
         LABEL_KEYS.put(BotAction.ADD_ATTACHMENT, MessageKey.BUTTON_ADD_ATTACHMENT);
         LABEL_KEYS.put(BotAction.SUBMIT, MessageKey.BUTTON_SUBMIT);
+        LABEL_KEYS.put(BotAction.BACK, MessageKey.BUTTON_BACK);
         LABEL_KEYS.put(BotAction.CANCEL, MessageKey.BUTTON_CANCEL);
+        LABEL_KEYS.put(BotAction.MAIN_MENU, MessageKey.BUTTON_MAIN_MENU);
+        LABEL_KEYS.put(BotAction.ADMIN_MENU, MessageKey.BUTTON_ADMIN_MENU);
         LABEL_KEYS.put(BotAction.YES, MessageKey.BUTTON_YES);
         LABEL_KEYS.put(BotAction.NO, MessageKey.BUTTON_NO);
+        LABEL_KEYS.put(BotAction.UNKNOWN, MessageKey.BUTTON_UNKNOWN);
     }
 
     private final Map<String, BotAction> byLabel;

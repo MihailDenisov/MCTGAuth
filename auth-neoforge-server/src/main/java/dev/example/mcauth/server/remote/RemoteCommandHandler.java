@@ -1,8 +1,12 @@
 package dev.example.mcauth.server.remote;
 
-/**
- * Placeholder for RemoteCommandHandler. Remote administration must remain typed and allowlisted.
- */
-public final class RemoteCommandHandler {
-    private RemoteCommandHandler() {}
+import com.google.gson.JsonObject;
+import dev.example.mcauth.api.RemoteCommandType;
+
+public interface RemoteCommandHandler {
+    RemoteCommandType type();
+    void validate(JsonObject payload);
+    CommandResult execute(JsonObject payload);
+
+    record CommandResult(boolean success, JsonObject result, String safeError) { }
 }

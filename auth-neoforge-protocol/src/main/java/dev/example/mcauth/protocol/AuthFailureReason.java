@@ -1,0 +1,12 @@
+package dev.example.mcauth.protocol;
+
+public enum AuthFailureReason {
+    INVALID_CREDENTIALS,
+    AUTH_TIMEOUT,
+    TOO_MANY_ATTEMPTS,
+    PROTOCOL_MISMATCH,
+    CLIENT_MISSING,
+    ACCOUNT_DISABLED,
+    ACCOUNT_NOT_SYNCHRONIZED,
+    INTERNAL_AUTH_ERROR
+}

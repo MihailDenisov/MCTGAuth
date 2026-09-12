@@ -8,6 +8,8 @@ Telegram identity: `telegram_id` PK, username snapshot, account status, persiste
 ## `minecraft_accounts`
 Account ID, owner Telegram ID, Minecraft UUID (nullable until known), unique normalized nickname, license flag, enabled flag, creation method (`REGISTRATION_TICKET`, `ADD_ACCOUNT_TICKET`, `ADMIN_MANUAL`), creator moderator ID where applicable, credential version metadata, timestamps.
 
+Administrative access suspension reuses the single `enabled` flag. A moderator disable/enable transaction updates exactly one account, creates the corresponding `ACCOUNT_DISABLED` or `ACCOUNT_ENABLED` sync event, and records an audit row with the moderator numeric Telegram ID, account ID, nickname snapshot, optional reason, and UTC timestamp. Repeating the current state creates no redundant event or audit transition.
+
 ## `tickets`
 Global numeric ticket ID, type, status, creator Telegram ID/username snapshot, optional Minecraft account ID, created/updated/closed timestamps, assigned moderator, admin chat/message identifiers.
 
@@ -24,6 +26,8 @@ Ticket ID, Telegram `file_id`, `file_unique_id`, media type, optional caption, t
 Telegram ID PK, username snapshot, enabled flag, role/permissions (future), added timestamp.
 
 ## `audit_log`
+
+Human-facing Telegram views render `occurred_at` in `Europe/Moscow`; the stored value remains an absolute UTC timestamp.
 Append-oriented event log: event type, ticket/account references, actor Telegram ID/username snapshot, timestamp, structured details. Never put secrets/passwords in details.
 
 ## `sync_events`
@@ -37,6 +41,10 @@ Durable queue for typed administrative commands sent from the backend to a Minec
 
 Command creation/completion must also emit `audit_log` records. Command payload/result data must never contain bot tokens, backend API credentials, plaintext passwords, or reusable authentication proofs.
 
+## `moderator_pending_actions`
+
+One expiring private-input action per moderator numeric Telegram ID. Phase 0.3 persists `REPLY_TO_TICKET` with its ticket ID, creation time, and expiry so an action started from an admin-group callback can be completed after a restart in that moderator's private chat. Completion and `/cancel` remove only the acting moderator's row.
+
 ## Migrations
 
 `auth-backend` reads the ordered `db/migration/migrations.txt` manifest. Each `VNNN__name.sql` file runs in its own transaction and is recorded in `schema_migrations`; applied versions are never executed again. Startup fails with the migration filename if a required migration cannot be applied.
@@ -44,5 +52,6 @@ Command creation/completion must also emit `audit_log` records. Command payload/
 - `V001__initial.sql`: users, moderators, registration tickets/decisions, accounts, audit log, and sync events.
 - `V002__backend_phase_2.sql`: affected-account/assignment fields, problem/violation/add-account data, messages, attachment references, password-change history, moderator permissions, and remote commands.
 - `V003__user_locale.sql`: persisted English/Russian Telegram interface preference on `users`.
+- `V004__telegram_workflow_fixes.sql`: nullable violation offender nickname and expiring per-moderator pending actions.
 
 The current schema requires every Minecraft account to have an owning Telegram user. Ownerless technical accounts are deferred.

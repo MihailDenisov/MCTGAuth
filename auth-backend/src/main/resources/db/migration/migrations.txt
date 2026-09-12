@@ -1,3 +1,4 @@
 V001__initial.sql
 V002__backend_phase_2.sql
 V003__user_locale.sql
+V004__telegram_workflow_fixes.sql

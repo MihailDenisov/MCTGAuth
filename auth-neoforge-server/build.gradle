@@ -1,7 +1,61 @@
+plugins {
+    id 'net.neoforged.moddev'
+}
+
+base {
+    archivesName = 'mctgauth-server'
+}
+
+neoForge {
+    version = project.neoforge_version
+    addModdingDependenciesTo sourceSets.test
+    runs {
+        server {
+            server()
+            programArgument '--nogui'
+        }
+    }
+    mods {
+        mctgauth_server {
+            sourceSet sourceSets.main
+            sourceSet project(':auth-neoforge-protocol').sourceSets.main
+        }
+    }
+}
+
 dependencies {
     implementation project(':auth-api')
-    // TODO: apply/configure the NeoForge ModDevGradle/NeoGradle plugin using the official 1.21.1 MDK.
-    // TODO: add SQLite JDBC if local server persistence remains JDBC-based.
+    compileOnly project(':auth-neoforge-protocol')
+    testImplementation project(':auth-neoforge-protocol')
+    jarJar project(':auth-api')
+
     testImplementation platform('org.junit:junit-bom:5.11.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+jar {
+    from project(':auth-neoforge-protocol').sourceSets.main.output
+}
+
+tasks.register('verifyServerJar') {
+    group = 'verification'
+    description = 'Fails when the server artifact contains conflicting SQLite or Jackson packages/libraries.'
+    dependsOn tasks.named('jar')
+    doLast {
+        def artifact = tasks.named('jar').get().archiveFile.get().asFile
+        def forbidden = zipTree(artifact).matching {
+            include 'org/sqlite/**'
+            include 'com/fasterxml/jackson/**'
+            include 'META-INF/jarjar/*sqlite*'
+            include 'META-INF/jarjar/*jackson*'
+        }.files
+        if (!forbidden.empty) {
+            throw new GradleException("Forbidden server dependencies found in ${artifact.name}: ${forbidden*.name}")
+        }
+    }
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('verifyServerJar')
 }

@@ -39,17 +39,32 @@ final class TelegramKeyboards {
         ObjectNode keyboard = replyKeyboard();
         ArrayNode rows = (ArrayNode) keyboard.get("keyboard");
         rows.add(actions(locale, BotAction.NEW_TICKETS, BotAction.IN_PROGRESS));
+        rows.add(actions(locale, BotAction.MY_ASSIGNED));
         rows.add(actions(locale, BotAction.REGISTRATIONS, BotAction.PROBLEMS));
         rows.add(actions(locale, BotAction.VIOLATIONS, BotAction.SEARCH));
         rows.add(actions(locale, BotAction.STATISTICS, BotAction.MANUAL_ACCOUNT));
         rows.add(actions(locale, BotAction.SERVER_MANAGEMENT));
+        rows.add(actions(locale, BotAction.MAIN_MENU));
         return keyboard;
+    }
+
+    ObjectNode adminInlineMenu(BotLocale locale) {
+        return inline(new String[][]{
+                {label(locale, BotAction.NEW_TICKETS), "admin:list:new:0"},
+                {label(locale, BotAction.IN_PROGRESS), "admin:list:progress:0"},
+                {label(locale, BotAction.MY_ASSIGNED), "admin:list:mine:0"},
+                {label(locale, BotAction.REGISTRATIONS), "admin:list:registrations:0"},
+                {label(locale, BotAction.PROBLEMS), "admin:list:problems:0"},
+                {label(locale, BotAction.VIOLATIONS), "admin:list:violations:0"},
+                {label(locale, BotAction.SEARCH), "admin:search"}
+        });
     }
 
     ObjectNode accountMenu(BotLocale locale) {
         ObjectNode keyboard = replyKeyboard();
         ((ArrayNode) keyboard.get("keyboard")).add(
                 actions(locale, BotAction.CHANGE_PASSWORD, BotAction.ADD_ACCOUNT));
+        ((ArrayNode) keyboard.get("keyboard")).add(actions(locale, BotAction.MAIN_MENU));
         return keyboard;
     }
 
@@ -57,13 +72,39 @@ final class TelegramKeyboards {
         ObjectNode keyboard = replyKeyboard();
         ArrayNode rows = (ArrayNode) keyboard.get("keyboard");
         rows.add(actions(locale, BotAction.ADD_ATTACHMENT));
-        rows.add(actions(locale, BotAction.SUBMIT, BotAction.CANCEL));
+        rows.add(actions(locale, BotAction.SUBMIT));
+        rows.add(actions(locale, BotAction.BACK, BotAction.CANCEL));
+        rows.add(actions(locale, BotAction.MAIN_MENU));
         return keyboard;
     }
 
     ObjectNode yesNo(BotLocale locale) {
+        return yesNo(locale, false);
+    }
+
+    ObjectNode yesNo(BotLocale locale, boolean admin) {
         ObjectNode keyboard = replyKeyboard();
-        ((ArrayNode) keyboard.get("keyboard")).add(actions(locale, BotAction.YES, BotAction.NO));
+        ArrayNode rows = (ArrayNode) keyboard.get("keyboard");
+        rows.add(actions(locale, BotAction.YES, BotAction.NO));
+        rows.add(actions(locale, BotAction.BACK, BotAction.CANCEL));
+        rows.add(actions(locale, admin ? BotAction.ADMIN_MENU : BotAction.MAIN_MENU));
+        return keyboard;
+    }
+
+    ObjectNode offenderKnown(BotLocale locale) {
+        ObjectNode keyboard = replyKeyboard();
+        ArrayNode rows = (ArrayNode) keyboard.get("keyboard");
+        rows.add(actions(locale, BotAction.YES, BotAction.UNKNOWN));
+        rows.add(actions(locale, BotAction.BACK, BotAction.CANCEL));
+        rows.add(actions(locale, BotAction.MAIN_MENU));
+        return keyboard;
+    }
+
+    ObjectNode wizard(BotLocale locale, boolean admin) {
+        ObjectNode keyboard = replyKeyboard();
+        ArrayNode rows = (ArrayNode) keyboard.get("keyboard");
+        rows.add(actions(locale, BotAction.BACK, BotAction.CANCEL));
+        rows.add(actions(locale, admin ? BotAction.ADMIN_MENU : BotAction.MAIN_MENU));
         return keyboard;
     }
 
@@ -72,10 +113,23 @@ final class TelegramKeyboards {
         ArrayNode rows = (ArrayNode) keyboard.get("keyboard");
         rows.add(actions(locale, BotAction.FORCE_SYNC, BotAction.AUTH_STATUS));
         rows.add(actions(locale, BotAction.RESYNC_PLAYER));
+        rows.add(actions(locale, BotAction.BACK, BotAction.ADMIN_MENU));
         return keyboard;
     }
 
     ObjectNode languageSelector() {
+        return baseLanguageSelector();
+    }
+
+    ObjectNode languageSelector(BotLocale locale) {
+        return inline(new String[][]{
+                {localization.text(BotLocale.ENGLISH, MessageKey.LANGUAGE_ENGLISH), "locale:set:en"},
+                {localization.text(BotLocale.RUSSIAN, MessageKey.LANGUAGE_RUSSIAN), "locale:set:ru"},
+                {localization.text(locale, MessageKey.BUTTON_MAIN_MENU), "nav:main"}
+        });
+    }
+
+    private ObjectNode baseLanguageSelector() {
         return inline(new String[][]{
                 {localization.text(BotLocale.ENGLISH, MessageKey.LANGUAGE_ENGLISH), "locale:set:en"},
                 {localization.text(BotLocale.RUSSIAN, MessageKey.LANGUAGE_RUSSIAN), "locale:set:ru"}
@@ -110,5 +164,9 @@ final class TelegramKeyboards {
             row.add(json.createObjectNode().put("text", label));
         }
         return row;
+    }
+
+    private String label(BotLocale locale, BotAction action) {
+        return localization.text(locale, MenuActionRouter.labelKey(action));
     }
 }

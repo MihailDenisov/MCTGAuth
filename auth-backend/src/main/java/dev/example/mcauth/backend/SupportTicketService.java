@@ -76,7 +76,9 @@ public final class SupportTicketService {
     public long createViolation(
             long telegramId, String username, long accountId, String offenderNickname,
             String description, List<AttachmentReference> attachments) {
-        String offender = AccountService.validateNickname(offenderNickname);
+        String suppliedOffender = optionalText(offenderNickname, 16, "Offender nickname");
+        String offender = suppliedOffender.isEmpty()
+                ? "" : AccountService.validateNickname(suppliedOffender);
         String safeDescription = requiredText(description, MAX_DESCRIPTION, "Violation description");
         List<AttachmentReference> safeAttachments = validateAttachments(attachments);
         return database.transaction(connection -> {
@@ -90,8 +92,13 @@ public final class SupportTicketService {
                     VALUES (?, ?, ?, ?)
                     """)) {
                 statement.setLong(1, ticketId);
-                statement.setString(2, offender);
-                statement.setString(3, offender.toLowerCase(Locale.ROOT));
+                if (offender.isEmpty()) {
+                    statement.setNull(2, java.sql.Types.VARCHAR);
+                    statement.setNull(3, java.sql.Types.VARCHAR);
+                } else {
+                    statement.setString(2, offender);
+                    statement.setString(3, offender.toLowerCase(Locale.ROOT));
+                }
                 statement.setString(4, safeDescription);
                 statement.executeUpdate();
             }
@@ -174,6 +181,12 @@ public final class SupportTicketService {
 
     public List<TicketListItem> adminTickets(
             ModeratorIdentity moderator, TicketStatus status, TicketType type, int page) {
+        return adminTickets(moderator, status, type, null, page);
+    }
+
+    public List<TicketListItem> adminTickets(
+            ModeratorIdentity moderator, TicketStatus status, TicketType type,
+            Long assignedModeratorId, int page) {
         if (page < 0) throw invalid("Page must not be negative");
         return database.transaction(connection -> {
             moderators.requirePermission(connection, moderator, ModeratorPermission.TICKET_VIEW);
@@ -181,11 +194,13 @@ public final class SupportTicketService {
             StringBuilder sql = new StringBuilder("SELECT * FROM tickets WHERE 1=1");
             if (status != null) sql.append(" AND status = ?");
             if (type != null) sql.append(" AND type = ?");
+            if (assignedModeratorId != null) sql.append(" AND assigned_moderator_telegram_id = ?");
             sql.append(" ORDER BY id DESC LIMIT ? OFFSET ?");
             try (PreparedStatement statement = connection.prepareStatement(sql.toString())) {
                 int index = 1;
                 if (status != null) statement.setString(index++, status.name());
                 if (type != null) statement.setString(index++, type.name());
+                if (assignedModeratorId != null) statement.setLong(index++, assignedModeratorId);
                 statement.setInt(index++, PAGE_SIZE);
                 statement.setInt(index, page * PAGE_SIZE);
                 try (ResultSet result = statement.executeQuery()) {
@@ -230,6 +245,7 @@ public final class SupportTicketService {
             if (ticket.status() != TicketStatus.IN_PROGRESS && ticket.status() != TicketStatus.WAITING_USER) {
                 throw invalidState("Ticket is not open for conversation");
             }
+            requireAssignedModerator(ticket, moderator);
             Instant now = Instant.now(clock);
             insertMessage(connection, ticketId, "MODERATOR", moderator.telegramId(), message, now);
             updateStatus(connection, ticketId, TicketStatus.WAITING_USER, now);
@@ -264,6 +280,7 @@ public final class SupportTicketService {
                     ? ModeratorPermission.TICKET_REJECT : ModeratorPermission.TICKET_RESOLVE;
             moderators.requirePermission(connection, moderator, permission);
             TicketListItem ticket = loadTicket(connection, ticketId);
+            if (ticket.assignedModeratorId() != null) requireAssignedModerator(ticket, moderator);
             if (!allowed(ticket.status(), target)) {
                 throw invalidState("Invalid ticket transition: " + ticket.status() + " -> " + target);
             }
@@ -284,6 +301,7 @@ public final class SupportTicketService {
                 return new TicketDecisionResult(TicketDecisionResult.Outcome.ALREADY_DECIDED,
                         ticketId, ticket.ownerTelegramId(), ticket.nickname(), null);
             }
+            requireAssignedModerator(ticket.assignedModeratorId(), moderator);
             if (ticket.status() != TicketStatus.OPEN && ticket.status() != TicketStatus.IN_PROGRESS) {
                 throw invalidState("Add-account ticket cannot be approved from " + ticket.status());
             }
@@ -321,6 +339,7 @@ public final class SupportTicketService {
                 return new TicketDecisionResult(TicketDecisionResult.Outcome.ALREADY_DECIDED,
                         ticketId, ticket.ownerTelegramId(), ticket.nickname(), null);
             }
+            requireAssignedModerator(ticket.assignedModeratorId(), moderator);
             if (ticket.status() != TicketStatus.OPEN && ticket.status() != TicketStatus.IN_PROGRESS) {
                 throw invalidState("Add-account ticket cannot be rejected from " + ticket.status());
             }
@@ -638,7 +657,8 @@ public final class SupportTicketService {
                 if (result.next()) {
                     java.sql.ResultSetMetaData metadata = result.getMetaData();
                     for (int index = 1; index <= metadata.getColumnCount(); index++) {
-                        fields.put(metadata.getColumnName(index), result.getString(index));
+                        String value = result.getString(index);
+                        fields.put(metadata.getColumnName(index), value == null ? "" : value);
                     }
                 }
             }
@@ -674,15 +694,20 @@ public final class SupportTicketService {
 
     private static AddAccountTicket loadAddAccount(Connection connection, long ticketId) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
-                SELECT t.status, t.creator_telegram_id, a.minecraft_nickname, a.normalized_nickname, a.licensed
+                SELECT t.status, t.creator_telegram_id, t.assigned_moderator_telegram_id,
+                       a.minecraft_nickname, a.normalized_nickname, a.licensed
                 FROM tickets t JOIN add_account_ticket_data a ON a.ticket_id = t.id
                 WHERE t.id = ? AND t.type = 'ADD_MINECRAFT_ACCOUNT'
                 """)) {
             statement.setLong(1, ticketId);
             try (ResultSet result = statement.executeQuery()) {
                 if (!result.next()) throw notFound();
-                return new AddAccountTicket(TicketStatus.valueOf(result.getString(1)), result.getLong(2),
-                        result.getString(3), result.getString(4), result.getInt(5) == 1);
+                long assignedId = result.getLong("assigned_moderator_telegram_id");
+                Long assignedModeratorId = result.wasNull() ? null : assignedId;
+                return new AddAccountTicket(TicketStatus.valueOf(result.getString("status")),
+                        result.getLong("creator_telegram_id"), assignedModeratorId,
+                        result.getString("minecraft_nickname"), result.getString("normalized_nickname"),
+                        result.getInt("licensed") == 1);
             }
         }
     }
@@ -747,10 +772,27 @@ public final class SupportTicketService {
         return new WorkflowException(WorkflowException.Code.NOT_FOUND, "Ticket not found");
     }
 
+    private static void requireAssignedModerator(
+            TicketListItem ticket, ModeratorIdentity moderator) {
+        if (!Objects.equals(ticket.assignedModeratorId(), moderator.telegramId())) {
+            throw new WorkflowException(WorkflowException.Code.UNAUTHORIZED,
+                    "Ticket is assigned to another moderator");
+        }
+    }
+
+    private static void requireAssignedModerator(
+            Long assignedModeratorId, ModeratorIdentity moderator) {
+        if (assignedModeratorId != null
+                && !Objects.equals(assignedModeratorId, moderator.telegramId())) {
+            throw new WorkflowException(WorkflowException.Code.UNAUTHORIZED,
+                    "Ticket is assigned to another moderator");
+        }
+    }
+
     @FunctionalInterface
     private interface StatementBinder { void bind(PreparedStatement statement) throws SQLException; }
 
     private record AddAccountTicket(
-            TicketStatus status, long ownerTelegramId, String nickname,
+            TicketStatus status, long ownerTelegramId, Long assignedModeratorId, String nickname,
             String normalizedNickname, boolean licensed) { }
 }

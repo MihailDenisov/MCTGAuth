@@ -1,1 +1,23 @@
-# Placeholder only. Replace/configure from the official NeoForge 1.21.1 MDK before building.
+modLoader="javafml"
+loaderVersion="[4,)"
+license="All Rights Reserved"
+
+[[mods]]
+modId="mctgauth_client"
+version="0.4.1"
+displayName="MCTGAuth Client"
+description='''MCTGAuth automatic authentication and client settings.'''
+
+[[dependencies.mctgauth_client]]
+modId="neoforge"
+type="required"
+versionRange="[21.1.244,)"
+ordering="NONE"
+side="CLIENT"
+
+[[dependencies.mctgauth_client]]
+modId="minecraft"
+type="required"
+versionRange="[1.21.1]"
+ordering="NONE"
+side="CLIENT"

@@ -15,6 +15,7 @@ import java.io.InputStream;
 import java.nio.file.Path;
 import java.time.ZoneOffset;
 import java.util.Properties;
+import java.util.TimeZone;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -44,8 +45,25 @@ class LocalizationServiceTest {
         assertEquals("In progress", service.text(BotLocale.ENGLISH, statusKey(TicketStatus.IN_PROGRESS)));
         assertEquals("В работе", service.text(BotLocale.RUSSIAN, statusKey(TicketStatus.IN_PROGRESS)));
         var instant = java.time.Instant.parse("2026-09-11T19:42:00Z");
-        assertEquals("2026-09-11 19:42", service.formatInstant(BotLocale.ENGLISH, instant));
-        assertEquals("11.09.2026 19:42", service.formatInstant(BotLocale.RUSSIAN, instant));
+        assertEquals("11.09.2026 22:42 MSK", service.formatInstant(BotLocale.ENGLISH, instant));
+        assertEquals("11.09.2026 22:42 МСК", service.formatInstant(BotLocale.RUSSIAN, instant));
+    }
+
+    @Test
+    void moscowRenderingDoesNotDependOnJvmDefaultTimezone() {
+        TimeZone original = TimeZone.getDefault();
+        try {
+            LocalizationService service = new LocalizationService();
+            var instant = java.time.Instant.parse("2026-09-12T11:34:00Z");
+            TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+            assertEquals("12.09.2026 14:34 МСК",
+                    service.formatInstant(BotLocale.RUSSIAN, instant));
+            TimeZone.setDefault(TimeZone.getTimeZone("America/New_York"));
+            assertEquals("12.09.2026 14:34 МСК",
+                    service.formatInstant(BotLocale.RUSSIAN, instant));
+        } finally {
+            TimeZone.setDefault(original);
+        }
     }
 
     @Test

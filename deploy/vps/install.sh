@@ -8,6 +8,10 @@ require_root
 require_commands awk basename chmod chown getent install realpath sqlite3 systemctl touch useradd
 require_java21
 
+if [[ $# -gt 1 ]]; then
+    die "Usage: $0 [installDist-directory-or-tar.gz]"
+fi
+
 if ! getent passwd minecraft-auth >/dev/null; then
     useradd --system --home-dir "${DATA_DIR}" --shell /usr/sbin/nologin minecraft-auth
     log_info "Created system user minecraft-auth."
@@ -29,6 +33,7 @@ if [[ ! -e "${ENV_FILE}" ]]; then
     chmod 0600 "${ENV_FILE}"
     printf '%s\n' \
         'TELEGRAM_BOT_TOKEN=replace_me' \
+        'TELEGRAM_BOT_USERNAME=ExampleBot' \
         'TELEGRAM_ADMIN_CHAT_ID=-1000000000000' \
         'MODERATOR_TELEGRAM_IDS=123456789' \
         "AUTH_DATABASE_PATH=${DATA_DIR}/auth-backend.db" \

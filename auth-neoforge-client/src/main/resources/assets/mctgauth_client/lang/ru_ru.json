@@ -1,0 +1,23 @@
+{
+  "mctgauth.settings.title": "Настройки MCTGAuth",
+  "mctgauth.settings.button": "MCTGAuth",
+  "mctgauth.settings.password": "Пароль",
+  "mctgauth.settings.show_password": "Показать пароль",
+  "mctgauth.settings.hide_password": "Скрыть пароль",
+  "mctgauth.settings.auto_authenticate": "Автоматическая авторизация: %s",
+  "mctgauth.settings.storage_warning": "Пароль MCTGAuth хранится локально на этом компьютере. Не передавайте другим пользователям папку конфигурации Minecraft.",
+  "mctgauth.action.save": "Сохранить",
+  "mctgauth.action.cancel": "Отмена",
+  "mctgauth.action.save_authenticate": "Сохранить и войти",
+  "mctgauth.action.disconnect": "Отключиться",
+  "mctgauth.auth.password_required": "Этот сервер использует авторизацию MCTGAuth. Введите пароль, который был выдан вам Telegram-ботом.",
+  "mctgauth.auth.stored_rejected": "Сохранённый пароль MCTGAuth отклонён. Проверьте пароль, выданный Telegram-ботом.",
+  "mctgauth.auth.success": "MCTGAuth: авторизация выполнена.",
+  "mctgauth.error.invalid_credentials": "Ошибка авторизации. Проверьте данные для входа.",
+  "mctgauth.error.timeout": "Время авторизации MCTGAuth истекло. Выполните переподключение вручную, когда будете готовы.",
+  "mctgauth.error.protocol_mismatch": "Несовместимая версия клиентского мода MCTGAuth.",
+  "mctgauth.error.mod_required": "Для подключения к серверу требуется клиентский мод MCTGAuth. Установите необходимый мод и подключитесь снова.",
+  "mctgauth.error.account_disabled": "Ваш аккаунт отключён.\nОбратитесь к администрации сервера.",
+  "mctgauth.error.account_not_synchronized": "Ваш аккаунт ещё не синхронизирован с сервером.\n\nПодождите завершения синхронизации или обратитесь к администрации.",
+  "mctgauth.error.internal": "Система авторизации сервера временно недоступна."
+}

@@ -101,6 +101,7 @@ public final class TicketService {
             if (existing != null) {
                 return existing;
             }
+            requireAssignedModerator(ticket.assignedModeratorId(), moderator);
             if (ticket.status() != TicketStatus.OPEN && ticket.status() != TicketStatus.IN_PROGRESS) {
                 throw new WorkflowException(WorkflowException.Code.INVALID_STATE,
                         "Ticket cannot be approved from status " + ticket.status());
@@ -138,6 +139,7 @@ public final class TicketService {
             if (existing != null) {
                 return existing;
             }
+            requireAssignedModerator(ticket.assignedModeratorId(), moderator);
             if (ticket.status() != TicketStatus.OPEN && ticket.status() != TicketStatus.IN_PROGRESS) {
                 throw new WorkflowException(WorkflowException.Code.INVALID_STATE,
                         "Ticket cannot be rejected from status " + ticket.status());
@@ -282,7 +284,8 @@ public final class TicketService {
 
     private static RegistrationTicket loadRegistration(Connection connection, long ticketId) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
-                SELECT t.status, t.creator_telegram_id, r.minecraft_nickname, r.normalized_nickname, r.licensed
+                SELECT t.status, t.creator_telegram_id, t.assigned_moderator_telegram_id,
+                       r.minecraft_nickname, r.normalized_nickname, r.licensed
                 FROM tickets t
                 JOIN registration_ticket_data r ON r.ticket_id = t.id
                 WHERE t.id = ? AND t.type = 'REGISTRATION'
@@ -296,6 +299,7 @@ public final class TicketService {
                 return new RegistrationTicket(
                         TicketStatus.valueOf(result.getString("status")),
                         result.getLong("creator_telegram_id"),
+                        nullableLong(result, "assigned_moderator_telegram_id"),
                         result.getString("minecraft_nickname"),
                         result.getString("normalized_nickname"),
                         result.getInt("licensed") == 1);
@@ -315,6 +319,18 @@ public final class TicketService {
                 return new TicketDecisionResult(TicketDecisionResult.Outcome.ALREADY_DECIDED, ticketId,
                         ticket.creatorTelegramId(), ticket.nickname(), null);
             }
+        }
+    }
+
+    private static Long nullableLong(ResultSet result, String column) throws SQLException {
+        long value = result.getLong(column);
+        return result.wasNull() ? null : value;
+    }
+
+    private static void requireAssignedModerator(Long assignedModeratorId, ModeratorIdentity moderator) {
+        if (assignedModeratorId != null && !Objects.equals(assignedModeratorId, moderator.telegramId())) {
+            throw new WorkflowException(WorkflowException.Code.UNAUTHORIZED,
+                    "Ticket is assigned to another moderator");
         }
     }
 
@@ -448,6 +464,7 @@ public final class TicketService {
     private record RegistrationTicket(
             TicketStatus status,
             long creatorTelegramId,
+            Long assignedModeratorId,
             String nickname,
             String normalizedNickname,
             boolean licensed) {

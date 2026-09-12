@@ -17,6 +17,9 @@ Before architectural changes, read `docs/PROJECT_LOGIC.md`, `docs/PROJECT_STRUCT
 - Telegram numeric IDs are authorization identities; usernames are display metadata.
 - Ticket/admin Telegram messages are views; the database is the source of truth.
 - Make state transitions and sync event handling idempotent.
+- `auth-neoforge-protocol` contains only safe client/server wire payloads and proof primitives. It must not contain backend tokens, Telegram types, SQLite, server policy, or client UI.
+- Never transmit a plaintext Minecraft password or persist one in the backend/server. The MCTGAuth client intentionally stores its password in its dedicated local client configuration; never log, diagnose, synchronize, or send that plaintext value. Protocol changes must keep explicit compatibility negotiation and add replay, stale-version, malformed-payload, and cross-side crypto tests.
+- Backend polling and Argon2id derivation must stay off Minecraft tick/render threads. Backend unavailability must not disable authentication from a valid local account cache.
 
 ## Implementation practices
 - Java 21; Gradle; UTF-8; LF line endings.
@@ -36,3 +39,12 @@ Use repo-local skills under `.agents/skills/` when relevant:
 
 Additional skill:
 - `remote-command-channel`: safe design and implementation of backend-to-Minecraft administrative commands.
+## Codex model and subagent policy
+- Parent/baseline agent: GPT-5.6 Sol with Medium reasoning.
+- Delegate routine, deterministic work to the configured lightweight subagent when practical.
+- Routine work includes: running existing tests, Gradle build verification, lint/format checks, localization parity checks, version/artifact checks, straightforward regression tests, simple log inspection, and repetitive refactors with clear acceptance criteria.
+- The lightweight subagent must not make architectural decisions or redesign authentication/security behavior on its own.
+- Keep the parent GPT-5.6 Sol Medium agent responsible for authentication/security changes, protocol design or compatibility changes, database migrations, concurrency/race conditions, backend/Minecraft synchronization bugs with unclear causes, NeoForge lifecycle/networking problems, architecture changes, and production failures with an unclear root cause.
+- Escalation rule: if the lightweight subagent does not identify and verify the issue clearly in one pass, stop retrying with the lightweight model and escalate to the parent GPT-5.6 Sol Medium agent.
+- When delegating tests, require the subagent to report the command executed, pass/fail result, failing test or file when applicable, and whether escalation is required.
+- Never delegate final security-sensitive decisions to a lightweight subagent.

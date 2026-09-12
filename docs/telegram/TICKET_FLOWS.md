@@ -28,8 +28,8 @@ REJECTED -> CLOSED
 ## Registration
 
 ```text
-EN: Enter your Minecraft nickname -> Licensed account? -> Age -> Experience -> Confirm
-RU: Введите игровой ник Minecraft -> Лицензионный аккаунт? -> Возраст -> Опыт -> Подтвердить
+EN: Your Minecraft nickname -> Licensed account? -> Age -> Discovery/gameplay experience -> Confirm
+RU: Ваш ник в Minecraft -> Лицензионный аккаунт? -> Возраст -> Откуда узнали / игровой опыт -> Подтвердить
 ```
 
 Yes/No buttons are localized and mapped to stable `BotAction.YES`/`BotAction.NO` actions. A user does not need to type an English literal.
@@ -44,12 +44,12 @@ RU: Выберите аккаунт -> Опишите проблему -> Доб
 ## Violation report
 
 ```text
-EN: Select account -> Reported nickname -> Description/evidence -> Submit
-RU: Выберите аккаунт -> Ник нарушителя -> Описание/доказательства -> Отправить
+EN: Select account -> Nickname known? -> Optional reported nickname -> Description/evidence -> Submit
+RU: Выберите аккаунт -> Ник известен? -> Необязательный ник нарушителя -> Описание/доказательства -> Отправить
 ```
 
 ## Account operations
 
 Password confirmation, generated-password delivery, add-account requests, ticket pagination/details, user/moderator replies, and all terminal notifications render using the recipient's locale. Admin cards and user-reply projections use `ADMIN_LOCALE`.
 
-Registration and add-account approval atomically create the account, password verifier, audit record, and synchronization event. Plaintext generated passwords are only passed for immediate localized delivery and are never stored. Timestamps remain UTC in the database and are formatted only at the Telegram boundary.
+Registration and add-account approval atomically create the account, password verifier, audit record, and synchronization event. Plaintext generated passwords are only passed for immediate localized delivery and are never stored. Timestamps remain UTC in the database and are rendered centrally as Moscow time only at the Telegram boundary.

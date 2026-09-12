@@ -95,6 +95,14 @@ sudo chown root:root /etc/minecraft-auth.env
 sudo chmod 0600 /etc/minecraft-auth.env
 ```
 
+При обновлении с версии 0.2 добавьте в сохранённый файл окружения имя вашего бота без `@`:
+
+```dotenv
+TELEGRAM_BOT_USERNAME=ExampleBot
+```
+
+Без этой переменной backend 0.4.1 намеренно не запустится: значение нужно для корректной обработки команд вида `/menu@ExampleBot` и игнорирования команд, адресованных другим ботам в общей группе.
+
 ## 3. Загрузка и активация release
 
 Загрузите архив через SFTP:
@@ -111,7 +119,7 @@ Developer PC
 
 ```bash
 sudo /opt/minecraft-auth-tools/update.sh \
-  /home/authbot/uploads/auth-backend-0.2.tar.gz
+  /home/authbot/uploads/auth-backend-0.4.1.tar.gz
 ```
 
 Либо передайте распакованный `installDist`:
@@ -161,7 +169,7 @@ sudo /opt/minecraft-auth-tools/rollback.sh
 
 ```bash
 sudo /opt/minecraft-auth-tools/rollback.sh \
-  2026-09-11_190500-v0.2
+  2026-09-11_190500-v0.3
 ```
 
 `rollback.sh` переключает только код. SQLite БД не заменяется. Если схема БД новее максимальной схемы старого release, откат блокируется. `--force-incompatible` следует использовать только после ручной проверки миграций и наличия проверенного backup.
@@ -229,6 +237,7 @@ sudo ./install.sh
 ```
 
 Существующий `/etc/minecraft-auth.env`, release-каталоги, БД и backup-файлы будут сохранены.
+После обновления toolkit сверяйте новые обязательные переменные с шаблоном в `install.sh`: существующий environment-файл не дополняется автоматически, чтобы не перезаписать секреты оператора.
 
 ## Важные ограничения
 

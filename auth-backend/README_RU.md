@@ -1,219 +1,78 @@
-# Установка бэкенда авторизации
+# MCTGAuth backend 0.4.1
 
 [English version](README.md)
 
-Бэкенд представляет собой самостоятельное приложение на Java 21. Оно запускает Telegram-бота в режиме long polling и хранит в SQLite основные данные о регистрации, модерации, аудите и синхронизации.
+Самостоятельный backend Java 21. Он запускает Telegram-бота через long polling и является источником истины для пользователей, заявок, Minecraft-аккаунтов, Argon2id verifier, аудита, событий синхронизации и типизированных remote-команд. Minecraft-модули используют HTTPS API и не имеют доступа к этой SQLite БД.
 
-Бэкенд включает кнопочные меню Telegram для пользователей и администраторов, упорядоченные миграции SQLite, локальный HTTP API для проверки состояния и синхронизации, а также надежно сохраненную очередь типизированных удаленных команд. Потребитель на стороне Minecraft/NeoForge реализуется отдельно.
+## Требования и безопасность
 
-## Требования
+Нужны Java 21 (JDK/JRE), исходящий HTTPS к `api.telegram.org`, бот BotFather, приватная admin-группа и каталог SQLite с правом записи. Процесс читает переменные окружения напрямую и не загружает `.env`. Секреты не должны попадать в Git; production-файл окружения — `root:root`, права `0600`. Открытые пароли Minecraft выдаются только получателю, не сохраняются, не логируются и не синхронизируются. Авторизация использует числовые Telegram ID, username — только отображаемые данные.
 
-- 64-разрядная JDK или JRE 21
-- Исходящий HTTPS-доступ к `api.telegram.org`
-- Telegram-бот, созданный через BotFather
-- Приватная группа администраторов в Telegram
-- Gradle Wrapper из репозитория; глобальная установка Gradle не требуется
+## Конфигурация
 
-Перед продолжением проверьте версию Java:
+`BackendConfig` проверяет обязательные значения и форматы при запуске.
 
-```text
-java -version
-```
+| Переменная | Обязательна | По умолчанию/пример | Секрет? и поведение |
+|---|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | Да | `<токен BotFather>` | Секрет long polling; не логировать/коммитить. |
+| `TELEGRAM_BOT_USERNAME` | Да | `ExampleBot` | Нет; 5–32 `[A-Za-z0-9_]`, без `@`; фильтр адресации команд. |
+| `TELEGRAM_ADMIN_CHAT_ID` | Да | `-1000000000000` | Нет; ненулевой числовой ID приватной группы, обычно отрицательный. |
+| `MODERATOR_TELEGRAM_IDS` | Да | `123456789,987654321` | Нет; положительные числовые ID через запятую. |
+| `AUTH_DATABASE_PATH` | Нет | `./data/auth-backend.db` | Чувствительный путь; service account нужен доступ к родителю. |
+| `HOW_TO_PLAY_URL` | Да | `https://t.me/example/1` | Нет; абсолютный HTTPS URL бота. |
+| `HTTP_BIND_ADDRESS` | Нет | `127.0.0.1` | Нет; только loopback, публичный bind отклоняется. |
+| `HTTP_PORT` | Нет | `8080` | Нет; от 1 до 65535. |
+| `AUTH_API_TOKEN` | Да | `<32+ случайных символа>` | Bearer-секрет; 32–512 непробельных символов. |
+| `SERVER_ID` | Да | `survival-main` | Нет; стабильный ID `[A-Za-z0-9._-]`, 1–64 символа. |
+| `ADMIN_LOCALE` | Нет | `en` или `ru` | Язык общей admin-группы; по умолчанию `en`. |
+| `DEFAULT_USER_LOCALE` | Нет | `en` или `ru` | Начальный язык private-чата; по умолчанию `en`. |
 
-Основная версия Java должна быть 21.
+Примеры — placeholders. Настоящие значения задавайте только в окружении процесса или `/etc/minecraft-auth.env`, не печатайте файл. `AUTH_API_TOKEN` должен совпадать с `backend.apiToken` server-мода или override `MCTGAUTH_API_TOKEN`.
 
-## 1. Настройка Telegram
+## Telegram
 
-1. Создайте бота через BotFather и храните его токен в секрете.
-2. Добавьте бота в приватную группу администраторов.
-3. Отправьте в этой группе команду с упоминанием бота, например `/start@your_bot_name`.
-4. Получите числовой ID группы из ответа `getUpdates`. ID супергрупп Telegram обычно отрицательные.
-5. Получите неизменяемый числовой Telegram ID каждого модератора. Не используйте имена пользователей для авторизации.
+Поддерживаются `/start`, `/menu`, `/adm`, `/admin` (alias), `/register`, `/tickets`, `/account`, `/cancel`; работают формы `/command` и `/command@ConfiguredBotUsername`, а обращённые к другому боту команды игнорируются. `/start` даёт новому пользователю выбор языка. В private-чате `/menu` всегда открывает обычное меню, даже модератору; `/adm`/`/admin` требуют включённый числовой ID модератора. В настроенной admin-группе `/menu`, `/adm`, `/cancel` открывают или сбрасывают inline-панель и повторно проверяют права. Другие группы игнорируются.
 
-Например, после сохранения токена в переменной окружения PowerShell может показать последние обновления без указания токена непосредственно в команде:
+Пользователь регистрируется, смотрит заявки/аккаунты, сообщает о проблеме или нарушении, запрашивает дополнительный аккаунт, меняет пароль и выбирает English/Russian. Одобрение регистрации/дополнительного аккаунта атомарно создаёт аккаунт, verifier, аудит и sync event; активная регистрация не дублируется. Модератор фильтрует/ищет заявки, отвечает privately, одобряет/отклоняет допустимые заявки, меняет состояние, смотрит статистику/аккаунты и ставит `FORCE_AUTH_SYNC`, `AUTH_STATUS`, `RESYNC_PLAYER`. Отключение требует причины/подтверждения; изменения аудируются, уведомляют владельца, создают sync и idempotentны. Карточки Telegram — представления, SQLite — источник истины. Pending-ответ модератора private, назначен по numeric ID и истекает через 30 минут.
 
-```powershell
-$env:TELEGRAM_BOT_TOKEN = '<bot-token>'
-(Invoke-RestMethod "https://api.telegram.org/bot$env:TELEGRAM_BOT_TOKEN/getUpdates").result | ConvertTo-Json -Depth 10
-```
+В БД и бизнес-логике timestamp — UTC `Instant`; в Telegram — `Europe/Moscow`, `dd.MM.yyyy HH:mm MSK`/`МСК`.
 
-Для группы администраторов найдите `message.chat.id`, а для модератора — `message.from.id`. Не публикуйте этот ответ в открытых задачах или чатах: он содержит идентификаторы Telegram и содержимое сообщений.
+## HTTP API
 
-## 2. Настройка переменных окружения
+Встроенный сервер слушает только loopback. `/health` и `/version` не требуют bearer, но не должны публиковаться. Все `/api/v1/server/*` требуют `Authorization: Bearer <AUTH_API_TOKEN>` и `server_id`; JSON ограничен 16 KiB.
 
-Приложение читает конфигурацию непосредственно из переменных окружения процесса. Файлы `.env` автоматически не загружаются.
+| Метод/путь | Ответ и назначение |
+|---|---|
+| `GET /health` | `200` при исправной БД, иначе `503`; status, database/Telegram, version, commit, schemaVersion. |
+| `GET /version` | `200`; только application, version, commit, buildTime, schemaVersion. |
+| `GET /api/v1/server/events?server_id=<id>` | `200`; pending sync events настроенного сервера. |
+| `POST /api/v1/server/events/<event-id>/ack?server_id=<id>` | `200 acknowledged` или `404 not_found`; повтор безопасен. |
+| `GET /api/v1/server/commands?server_id=<id>` | `200`; упорядоченные неистёкшие typed-команды. |
+| `POST /api/v1/server/commands/<command-id>/started?server_id=<id>` | `200 running` или `409 invalid_state`. |
+| `POST /api/v1/server/commands/<command-id>/result?server_id=<id>` | JSON `status` `SUCCESS`/`FAILED`, структурированный `result`, необязательный safe `errorMessage`; `200` или `409 invalid_state`. |
 
-| Переменная | Обязательна | Описание |
-| --- | --- | --- |
-| `TELEGRAM_BOT_TOKEN` | Да | Секретный токен, выданный BotFather. |
-| `TELEGRAM_ADMIN_CHAT_ID` | Да | Числовой ID приватной группы администраторов. |
-| `MODERATOR_TELEGRAM_IDS` | Да | Разделенные запятыми числовые Telegram ID пользователей, которым разрешено принимать решения по заявкам. |
-| `AUTH_DATABASE_PATH` | Нет | Путь к SQLite; значение по умолчанию — `./data/auth-backend.db`. |
-| `HOW_TO_PLAY_URL` | Да | Абсолютный HTTPS-адрес подробной инструкции сервера. |
-| `HTTP_BIND_ADDRESS` | Нет | Локальный адрес; по умолчанию `127.0.0.1`. Внешние адреса отклоняются. |
-| `HTTP_PORT` | Нет | Локальный HTTP-порт; по умолчанию `8080`. |
-| `AUTH_API_TOKEN` | Да | Случайный секрет API сервера длиной не менее 32 символов. |
-| `SERVER_ID` | Да | Стабильный идентификатор сервера, например `survival-main`. |
-| `ADMIN_LOCALE` | Нет | Язык общей группы администраторов: `en` или `ru`; по умолчанию `en`. |
-| `DEFAULT_USER_LOCALE` | Нет | Начальный язык пользователя, если Telegram не предложил поддерживаемый; `en` или `ru`, по умолчанию `en`. |
+Ошибки: `401`/`unauthorized` с `WWW-Authenticate: Bearer`; `405`/`method_not_allowed`; неверные ID/JSON/status/query — `400`/`invalid_request`; неизвестные маршрут/ID — `404`/`not_found`; отклонённый workflow — `403`/`409` `request_rejected`. Ответы JSON с `Cache-Control: no-store`. Принимается только настроенный `SERVER_ID`; ID, expiry, ack и переходы состояний проверяются idempotently. Подробности: [`docs/api/SYNC_API.md`](../docs/api/SYNC_API.md), [`docs/api/REMOTE_COMMAND_API.md`](../docs/api/REMOTE_COMMAND_API.md). Произвольных shell/RCON-команд нет.
 
-Никогда не добавляйте настоящие значения в репозиторий. Убедитесь, что учетная запись службы может записывать данные в каталог базы данных.
+## SQLite, сборка и запуск
 
-## 3. Сборка и тестирование
-
-Выполняйте команды из корня репозитория.
-
-Windows PowerShell:
+При открытии backend создаёт родительский каталог, включает foreign keys, busy timeout 5 секунд, WAL и упорядоченные миграции. Версия схемы доступна в `/health` и `/version`; metadata — `src/main/resources/db/migration/migrations.txt`. В БД хранится UTC, Moscow используется только для Telegram. Перед backup/restore останавливайте service. Не удаляйте и не редактируйте эту authoritative БД вручную.
 
 ```powershell
 .\gradlew.bat :auth-backend:test
 .\gradlew.bat :auth-backend:installDist
+.\gradlew.bat :auth-backend:deploymentArchive
 ```
 
-Linux:
+Linux использует `./gradlew` с теми же задачами. Дистрибутив: `auth-backend/build/install/auth-backend/`; archive: `auth-backend/build/distributions/auth-backend-<version>.tar.gz`. Задайте переменные и используйте `:auth-backend:run` или launcher; не помещайте секреты в историю команд.
+
+## Managed deployment и операции
+
+Используйте канонический Debian toolkit: [`deploy/vps/README.md`](../deploy/vps/README.md) и [`docs/deployment/VPS_MANAGEMENT.md`](../docs/deployment/VPS_MANAGEMENT.md). Он отделяет releases от данных `/var/lib/minecraft-auth` и `/etc/minecraft-auth.env`, проверяет archive/schema, делает SQLite backup, health-check и защищённые rollback/restore. Не заменяйте `/opt/minecraft-auth` напрямую по legacy-процедуре.
 
 ```bash
-./gradlew :auth-backend:test
-./gradlew :auth-backend:installDist
+sudo /opt/minecraft-auth-tools/status.sh
+sudo /opt/minecraft-auth-tools/health.sh
+sudo /opt/minecraft-auth-tools/logs.sh -n 200
 ```
 
-Готовый к запуску дистрибутив будет создан в `auth-backend/build/install/auth-backend/`.
-
-## 4. Локальный запуск в Windows
-
-Из корня репозитория выполните:
-
-```powershell
-$env:TELEGRAM_BOT_TOKEN = '<bot-token>'
-$env:TELEGRAM_ADMIN_CHAT_ID = '-1000000000000'
-$env:MODERATOR_TELEGRAM_IDS = '123456789,987654321'
-$env:AUTH_DATABASE_PATH = '.\data\auth-backend.db'
-$env:HOW_TO_PLAY_URL = 'https://t.me/example/1'
-$env:HTTP_BIND_ADDRESS = '127.0.0.1'
-$env:HTTP_PORT = '8080'
-$env:AUTH_API_TOKEN = '<at-least-32-random-characters>'
-$env:SERVER_ID = 'survival-main'
-$env:ADMIN_LOCALE = 'ru'
-$env:DEFAULT_USER_LOCALE = 'en'
-.\gradlew.bat :auth-backend:run
-```
-
-После выполнения `installDist` также можно запустить готовый скрипт:
-
-```powershell
-.\auth-backend\build\install\auth-backend\bin\auth-backend.bat
-```
-
-Отправьте боту в личном чате команду `/start`, выберите язык и начните регистрацию через локализованное меню. После заполнения анкеты в группе администраторов должна появиться карточка заявки на языке `ADMIN_LOCALE`.
-
-## 5. Установка на Debian VPS
-
-Установите среду выполнения Java 21 из подходящего для VPS источника пакетов или от выбранного поставщика JDK, затем проверьте ее командой `java -version`. Соберите дистрибутив на доверенном компьютере или непосредственно на VPS и скопируйте содержимое `auth-backend/build/install/auth-backend/` в `/opt/minecraft-auth/`.
-
-Создайте отдельную учетную запись службы и каталог данных:
-
-```bash
-sudo useradd --system --home /var/lib/minecraft-auth --shell /usr/sbin/nologin minecraft-auth
-sudo install -d -o minecraft-auth -g minecraft-auth -m 0750 /var/lib/minecraft-auth
-sudo install -d -o root -g root -m 0755 /opt/minecraft-auth
-```
-
-Поместите собранный дистрибутив в `/opt/minecraft-auth/` и сделайте файл запуска исполняемым:
-
-```bash
-sudo chmod 0755 /opt/minecraft-auth/bin/auth-backend
-sudo chown -R root:root /opt/minecraft-auth
-```
-
-От имени `root` создайте файл `/etc/minecraft-auth.env`:
-
-```text
-TELEGRAM_BOT_TOKEN=<bot-token>
-TELEGRAM_ADMIN_CHAT_ID=-1000000000000
-MODERATOR_TELEGRAM_IDS=123456789,987654321
-AUTH_DATABASE_PATH=/var/lib/minecraft-auth/auth-backend.db
-HOW_TO_PLAY_URL=https://t.me/example/1
-HTTP_BIND_ADDRESS=127.0.0.1
-HTTP_PORT=8080
-AUTH_API_TOKEN=<at-least-32-random-characters>
-SERVER_ID=survival-main
-ADMIN_LOCALE=ru
-DEFAULT_USER_LOCALE=en
-```
-
-Ограничьте доступ к файлу с секретами:
-
-```bash
-sudo chown root:root /etc/minecraft-auth.env
-sudo chmod 0600 /etc/minecraft-auth.env
-```
-
-Создайте `/etc/systemd/system/minecraft-auth.service`:
-
-```ini
-[Unit]
-Description=Minecraft Telegram Authentication Backend
-Wants=network-online.target
-After=network-online.target
-
-[Service]
-Type=simple
-User=minecraft-auth
-Group=minecraft-auth
-WorkingDirectory=/var/lib/minecraft-auth
-EnvironmentFile=/etc/minecraft-auth.env
-ExecStart=/opt/minecraft-auth/bin/auth-backend
-Restart=on-failure
-RestartSec=5s
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectHome=true
-ProtectSystem=strict
-ReadWritePaths=/var/lib/minecraft-auth
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Перезагрузите конфигурацию systemd и запустите службу:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now minecraft-auth.service
-sudo systemctl status minecraft-auth.service
-```
-
-Для просмотра очищенного от секретов вывода приложения используйте:
-
-```bash
-sudo journalctl -u minecraft-auth.service -f
-```
-
-Приложение намеренно не записывает в журнал токены бота и пароли в открытом виде. Несмотря на это, доступ к журналу следует считать административным.
-
-Установка по release-каталогам, обновление через SFTP, автоматический откат при ошибке health check, безопасные backup/restore SQLite, status, logs и cleanup описаны в [`deploy/vps/README.md`](../deploy/vps/README.md) и [`docs/deployment/VPS_MANAGEMENT.md`](../docs/deployment/VPS_MANAGEMENT.md).
-
-## Локализация
-
-Интерфейс Telegram поддерживает английский и русский языки. Перед регистрацией новый пользователь получает выбор языка. Выбор хранится в SQLite и позднее изменяется через `⚙️ Настройки`. Значение Telegram `language_code` используется только как первоначальная подсказка и не заменяет сохранённый выбор.
-
-`ADMIN_LOCALE` независимо задаёт язык общей группы администраторов. Личный чат модератора использует сохранённый язык самого модератора. Числовые Telegram ID, callback-идентификаторы, значения базы данных и внутренние enum не зависят от языка.
-
-Переводы находятся в `src/main/resources/i18n/messages_en.properties` и `messages_ru.properties`. Чтобы добавить язык, добавьте его в `BotLocale`, создайте соответствующий ресурс, переведите каждый обязательный `MessageKey`, расширьте проверку конфигурации и тесты маршрутизации, затем задокументируйте новый код. Английский остаётся резервным языком. Тесты требуют одинаковый набор ключей в английском и русском ресурсах.
-
-## Обновление
-
-1. Остановите службу и создайте резервную копию `/var/lib/minecraft-auth/auth-backend.db`.
-2. Соберите новый дистрибутив командой `:auth-backend:installDist`.
-3. Замените содержимое `/opt/minecraft-auth/` новым дистрибутивом.
-4. Запустите службу и проверьте ее состояние и процесс регистрации через Telegram.
-
-Не удаляйте базу данных SQLite при обновлении. Она является источником истины для заявок, учетных записей, журнала аудита и ожидающих событий синхронизации.
-
-## Устранение неполадок
-
-- `TELEGRAM_BOT_TOKEN is required`: задайте переменную в окружении того же процесса или в файле окружения systemd, из которого запускается бэкенд.
-- Карточка заявки не появляется: проверьте отрицательный ID группы администраторов, наличие бота в группе, исходящий HTTPS-доступ и состояние службы.
-- Модератор получает ошибку авторизации: добавьте его числовой `from.id` в `MODERATOR_TELEGRAM_IDS` и перезапустите службу.
-- SQLite не может открыть базу данных: проверьте, что учетная запись службы владеет родительским каталогом и имеет право записи.
-- Бот не отвечает в личном чате: проверьте `journalctl`, убедитесь, что токен принадлежит нужному боту и что другой процесс не использует long polling с тем же токеном.
+Java, Telegram, sync, cache, deployment, rollback и redaction: [`docs/troubleshooting/TROUBLESHOOTING_RU.md`](../docs/troubleshooting/TROUBLESHOOTING_RU.md).

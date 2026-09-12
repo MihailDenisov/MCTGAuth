@@ -1,1 +1,26 @@
-# Placeholder only. Replace/configure from the official NeoForge 1.21.1 MDK before building.
+modLoader="javafml"
+loaderVersion="[4,)"
+license="All Rights Reserved"
+
+[[mods]]
+modId="mctgauth_server"
+version="0.4.1"
+displayName="MCTGAuth Server"
+description='''Dedicated-server authentication, local credential cache, and backend synchronization.'''
+
+[[mixins]]
+config="mctgauth_server.mixins.json"
+
+[[dependencies.mctgauth_server]]
+modId="neoforge"
+type="required"
+versionRange="[21.1.244,)"
+ordering="NONE"
+side="SERVER"
+
+[[dependencies.mctgauth_server]]
+modId="minecraft"
+type="required"
+versionRange="[1.21.1]"
+ordering="NONE"
+side="SERVER"

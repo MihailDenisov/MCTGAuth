@@ -13,6 +13,7 @@ import java.util.Set;
 public record BackendConfig(
         Path databasePath,
         String telegramBotToken,
+        String telegramBotUsername,
         long telegramAdminChatId,
         Set<Long> moderatorTelegramIds,
         String howToPlayUrl,
@@ -27,6 +28,11 @@ public record BackendConfig(
         moderatorTelegramIds = Set.copyOf(moderatorTelegramIds);
         if (telegramBotToken == null || telegramBotToken.isBlank()) {
             throw new IllegalArgumentException("TELEGRAM_BOT_TOKEN is required");
+        }
+        telegramBotUsername = telegramBotUsername == null ? "" : telegramBotUsername.strip();
+        if (telegramBotUsername.startsWith("@")) telegramBotUsername = telegramBotUsername.substring(1);
+        if (!telegramBotUsername.matches("[A-Za-z0-9_]{5,32}")) {
+            throw new IllegalArgumentException("TELEGRAM_BOT_USERNAME has an invalid format");
         }
         if (telegramAdminChatId == 0) {
             throw new IllegalArgumentException("TELEGRAM_ADMIN_CHAT_ID is required");
@@ -62,6 +68,7 @@ public record BackendConfig(
         return new BackendConfig(
                 Path.of(environment.getOrDefault("AUTH_DATABASE_PATH", "./data/auth-backend.db")),
                 required(environment, "TELEGRAM_BOT_TOKEN"),
+                required(environment, "TELEGRAM_BOT_USERNAME"),
                 parseChatId(required(environment, "TELEGRAM_ADMIN_CHAT_ID")),
                 moderatorIds,
                 required(environment, "HOW_TO_PLAY_URL"),
