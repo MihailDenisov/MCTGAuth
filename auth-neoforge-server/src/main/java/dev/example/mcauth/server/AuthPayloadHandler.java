@@ -6,7 +6,6 @@ import dev.example.mcauth.protocol.AuthProtocol;
 import dev.example.mcauth.protocol.AuthResponsePayload;
 import dev.example.mcauth.protocol.AuthSuccessPayload;
 import dev.example.mcauth.protocol.ClientHelloPayload;
-import dev.example.mcauth.protocol.ServerHelloPayload;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.network.PacketDistributor;
@@ -37,8 +36,6 @@ final class AuthPayloadHandler {
             rejectAndDisconnect(player, AuthFailureReason.INTERNAL_AUTH_ERROR, exception);
             return;
         }
-        PacketDistributor.sendToPlayer(player, new ServerHelloPayload(AuthProtocol.AUTH_PROTOCOL_VERSION,
-                AuthProtocol.MOD_VERSION, AuthProtocol.REQUIRED_FEATURES));
         sendDecision(player, decision);
     }
 

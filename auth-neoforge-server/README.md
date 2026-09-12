@@ -1,6 +1,6 @@
 # MCTGAuth Server
 
-Dedicated-server-only NeoForge 1.21.1 mod. Required runtime is Java 21, Minecraft 1.21.1, and NeoForge 21.1.244 (or a compatible 21.1.x release). Install only `build/libs/mctgauth-server-0.4.1.jar` in the dedicated server's `mods/` directory; never distribute this server JAR to players.
+Dedicated-server-only NeoForge 1.21.1 mod. Required runtime is Java 21, Minecraft 1.21.1, and NeoForge 21.1.244 (or a compatible 21.1.x release). Install only `build/libs/mctgauth-server-0.4.2.jar` in the dedicated server's `mods/` directory; never distribute this server JAR to players.
 
 The server stores synchronized Argon2id verifier records and idempotency metadata in `<server>/mctgauth/accounts.json` (schema 1). Writes use `accounts.json.tmp` and `accounts.json.bak`; protect the whole `mctgauth/` directory. The cache contains no plaintext password. Existing synchronized accounts remain locally login-capable while the backend is unavailable.
 
@@ -52,7 +52,7 @@ The backend's typed command queue currently supports force sync, auth status, an
 
 ## Authentication behavior and logs
 
-Players are quarantined after login until the client completes authentication: movement, containers, interactions, item drops/pickups, damage, chat, commands, and dimension changes are blocked or terminated. Authentication timeout is 60 seconds by default, with three attempts. When account disabling is synchronized, currently connected disabled players are disconnected when `disconnectPlayerWhenAccountDisabled=true`.
+Players are quarantined after login until the client completes authentication: movement, containers, interactions, item drops/pickups, damage, chat, commands, and dimension changes are blocked or terminated. The server advertises `server_hello` first and accepts `client_hello` before issuing a challenge. Authentication timeout is 60 seconds by default, with three attempts. When account disabling is synchronized, currently connected disabled players are disconnected when `disconnectPlayerWhenAccountDisabled=true`.
 
 Server logs report redacted backend configuration, synchronization health, authentication start/success/rejection, and initialization errors. They never log API tokens or plaintext passwords. Protocol failure reasons are `INVALID_CREDENTIALS`, `AUTH_TIMEOUT`, `TOO_MANY_ATTEMPTS`, `PROTOCOL_MISMATCH`, `CLIENT_MISSING`, `ACCOUNT_DISABLED`, `ACCOUNT_NOT_SYNCHRONIZED`, and `INTERNAL_AUTH_ERROR`.
 

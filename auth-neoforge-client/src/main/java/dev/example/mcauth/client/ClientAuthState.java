@@ -2,6 +2,7 @@ package dev.example.mcauth.client;
 
 public enum ClientAuthState {
     DISCONNECTED,
+    PASSIVE,
     NEGOTIATING,
     WAITING_FOR_PASSWORD,
     COMPUTING,

@@ -101,7 +101,7 @@ sudo chmod 0600 /etc/minecraft-auth.env
 TELEGRAM_BOT_USERNAME=ExampleBot
 ```
 
-Без этой переменной backend 0.4.1 намеренно не запустится: значение нужно для корректной обработки команд вида `/menu@ExampleBot` и игнорирования команд, адресованных другим ботам в общей группе.
+Без этой переменной backend 0.4.2 намеренно не запустится: значение нужно для корректной обработки команд вида `/menu@ExampleBot` и игнорирования команд, адресованных другим ботам в общей группе.
 
 ## 3. Загрузка и активация release
 
@@ -119,7 +119,7 @@ Developer PC
 
 ```bash
 sudo /opt/minecraft-auth-tools/update.sh \
-  /home/authbot/uploads/auth-backend-0.4.1.tar.gz
+  /home/authbot/uploads/auth-backend-0.4.2.tar.gz
 ```
 
 Либо передайте распакованный `installDist`:

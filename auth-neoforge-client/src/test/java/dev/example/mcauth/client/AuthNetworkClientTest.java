@@ -32,6 +32,7 @@ class AuthNetworkClientTest {
         byte[] nonce = new byte[32];
         Arrays.fill(nonce, (byte) 3);
         client.connected("Test_Player");
+        assertTrue(client.activate());
         client.challenge(new AuthChallengePayload(session, 1,
                 new Argon2Spec(8192, 1, 1, 32, new byte[16]), nonce, 60));
 
@@ -61,6 +62,7 @@ class AuthNetworkClientTest {
         byte[] nonce = new byte[32];
         Arrays.fill(nonce, (byte) 7);
         client.connected("Test_Player");
+        assertTrue(client.activate());
         AuthChallengePayload first = new AuthChallengePayload(UUID.randomUUID(), 1,
                 new Argon2Spec(8192, 1, 1, 32, new byte[16]), nonce, 60);
         assertEquals(AuthNetworkClient.ChallengeDisposition.AUTO_SUBMITTED,
@@ -75,6 +77,7 @@ class AuthNetworkClientTest {
         assertEquals(ClientAuthState.WAITING_FOR_PASSWORD, client.state());
         client.reset();
         client.connected("Test_Player");
+        assertTrue(client.activate());
         assertEquals(AuthNetworkClient.ChallengeDisposition.INTERACTIVE_REQUIRED,
                 client.handleChallenge(new AuthChallengePayload(UUID.randomUUID(), 1,
                         new Argon2Spec(8192, 1, 1, 32, new byte[16]), nonce, 60), "", true));
@@ -100,6 +103,7 @@ class AuthNetworkClientTest {
 
         AuthNetworkClient client = new AuthNetworkClient((payload, generation) -> sent.add(payload), executor);
         client.connected("Test_Player");
+        assertTrue(client.activate());
         long firstGeneration = client.connectionGeneration();
         AuthChallengePayload challenge = challenge();
         client.challenge(challenge);
@@ -113,8 +117,9 @@ class AuthNetworkClientTest {
         client.disconnected();
         assertEquals(ClientAuthState.TERMINAL_FAILURE, client.state());
         client.connected("Test_Player"); // A later manual Minecraft connection starts a fresh lifecycle.
-        assertEquals(ClientAuthState.NEGOTIATING, client.state());
+        assertEquals(ClientAuthState.PASSIVE, client.state());
         assertTrue(client.terminalFailure().isEmpty());
+        assertTrue(client.activate());
         AuthChallengePayload freshChallenge = challenge();
         client.challenge(freshChallenge);
         assertTrue(client.submit("fresh-connection-password".toCharArray()));
@@ -146,6 +151,7 @@ class AuthNetworkClientTest {
                 throw new AssertionError("terminal failure must not send authentication work");
             }, executor);
             client.connected("Test_Player");
+            assertTrue(client.activate());
             assertTrue(client.failure(new AuthFailurePayload(null, reason, false, 0)));
             assertEquals(ClientAuthState.TERMINAL_FAILURE, client.state());
             assertEquals(reason, client.terminalFailure().orElseThrow());
@@ -161,6 +167,7 @@ class AuthNetworkClientTest {
         var executor = Executors.newSingleThreadExecutor();
         AuthNetworkClient client = new AuthNetworkClient((payload, ignored) -> sent.add(payload), executor);
         client.connected("Test_Player");
+        assertTrue(client.activate());
         long generation = client.connectionGeneration();
         AuthChallengePayload first = challenge();
         client.challenge(first);
@@ -188,6 +195,7 @@ class AuthNetworkClientTest {
             prepared.add(payload);
         }, executor);
         client.connected("Test_Player");
+        assertTrue(client.activate());
         AuthChallengePayload challenge = challenge();
         client.challenge(challenge);
         assertTrue(client.submit("temporary-password".toCharArray()));
@@ -197,6 +205,102 @@ class AuthNetworkClientTest {
         client.failure(new AuthFailurePayload(challenge.sessionId(),
                 AuthFailureReason.ACCOUNT_DISABLED, false, 0));
         assertFalse(client.maySendForGeneration(preparedGeneration.get()));
+        client.close();
+        assertTrue(executor.awaitTermination(2, TimeUnit.SECONDS));
+    }
+
+    @Test
+    void singleplayerConnectionNeverActivatesOrAcceptsAChallenge() {
+        var executor = Executors.newSingleThreadExecutor();
+        AuthNetworkClient client = new AuthNetworkClient((payload, generation) -> {
+            throw new AssertionError("singleplayer must not send authentication payloads");
+        }, executor);
+
+        client.connected("Test_Player", false);
+
+        assertEquals(ClientAuthState.PASSIVE, client.state());
+        assertFalse(client.mayActivate());
+        assertFalse(client.activate());
+        assertEquals(AuthNetworkClient.ChallengeDisposition.IGNORED,
+                client.handleChallenge(challenge(), "stored-password", true));
+        assertFalse(client.failure(new AuthFailurePayload(null, AuthFailureReason.AUTH_TIMEOUT, false, 0)));
+        assertEquals(ClientAuthState.PASSIVE, client.state());
+        client.close();
+    }
+
+    @Test
+    void thirdPartyConnectionRemainsPassiveWithoutServerCapability() {
+        var executor = Executors.newSingleThreadExecutor();
+        AuthNetworkClient client = new AuthNetworkClient((payload, generation) -> {
+            throw new AssertionError("a third-party connection must not send authentication payloads");
+        }, executor);
+
+        client.connected("Test_Player");
+
+        assertEquals(ClientAuthState.PASSIVE, client.state());
+        assertTrue(client.mayActivate());
+        assertFalse(client.isActive());
+        assertEquals(AuthNetworkClient.ChallengeDisposition.IGNORED,
+                client.handleChallenge(challenge(), "stored-password", true));
+        assertEquals(ClientAuthState.PASSIVE, client.state());
+        client.close();
+    }
+
+    @Test
+    void capabilityActivationDoesNotLeakAcrossConnectionKinds() {
+        var executor = Executors.newSingleThreadExecutor();
+        AuthNetworkClient client = new AuthNetworkClient((payload, generation) -> { }, executor);
+
+        client.connected("Test_Player");
+        assertTrue(client.activate());
+        assertEquals(ClientAuthState.NEGOTIATING, client.state());
+        client.disconnected();
+
+        client.connected("Test_Player", false);
+        assertEquals(ClientAuthState.PASSIVE, client.state());
+        assertFalse(client.activate());
+        client.disconnected();
+
+        client.connected("Test_Player");
+        assertEquals(ClientAuthState.PASSIVE, client.state());
+        client.disconnected();
+
+        client.connected("Test_Player");
+        assertEquals(ClientAuthState.PASSIVE, client.state());
+        assertTrue(client.activate());
+        assertEquals(ClientAuthState.NEGOTIATING, client.state());
+        client.close();
+    }
+
+    @Test
+    void staleCryptoResultCannotAffectLaterPassiveConnection() throws Exception {
+        ArrayBlockingQueue<AuthResponsePayload> sent = new ArrayBlockingQueue<>(1);
+        CountDownLatch executorOccupied = new CountDownLatch(1);
+        CountDownLatch releaseExecutor = new CountDownLatch(1);
+        var executor = Executors.newSingleThreadExecutor();
+        executor.execute(() -> {
+            executorOccupied.countDown();
+            try {
+                releaseExecutor.await();
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        assertTrue(executorOccupied.await(2, TimeUnit.SECONDS));
+        AuthNetworkClient client = new AuthNetworkClient((payload, generation) -> sent.add(payload), executor);
+        client.connected("Test_Player");
+        assertTrue(client.activate());
+        client.challenge(challenge());
+        assertTrue(client.submit("old-connection-password".toCharArray()));
+
+        client.disconnected();
+        client.connected("Test_Player");
+        assertEquals(ClientAuthState.PASSIVE, client.state());
+        releaseExecutor.countDown();
+        executor.submit(() -> { }).get(10, TimeUnit.SECONDS);
+
+        assertNull(sent.poll());
+        assertEquals(ClientAuthState.PASSIVE, client.state());
         client.close();
         assertTrue(executor.awaitTermination(2, TimeUnit.SECONDS));
     }

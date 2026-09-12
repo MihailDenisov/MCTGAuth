@@ -1,4 +1,4 @@
-# MCTGAuth backend 0.4.1
+# MCTGAuth backend 0.4.2
 
 [Русская версия](README_RU.md)
 

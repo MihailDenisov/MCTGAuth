@@ -10,7 +10,7 @@ public final class AuthProtocol {
     public static final String NAMESPACE = "mctgauth";
     public static final String CLIENT_MOD_ID = "mctgauth_client";
     public static final String SERVER_MOD_ID = "mctgauth_server";
-    public static final String MOD_VERSION = "0.4.1";
+    public static final String MOD_VERSION = "0.4.2";
     public static final long FEATURE_AUTH_CHALLENGE_V1 = 1L;
     public static final long FEATURE_LOCALIZED_FAILURES = 1L << 1;
     public static final long REQUIRED_FEATURES = FEATURE_AUTH_CHALLENGE_V1 | FEATURE_LOCALIZED_FAILURES;

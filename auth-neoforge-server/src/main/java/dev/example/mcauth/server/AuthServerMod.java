@@ -34,6 +34,7 @@ import net.neoforged.neoforge.event.server.ServerStartingEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
+import net.neoforged.neoforge.network.PacketDistributor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -194,6 +195,9 @@ public final class AuthServerMod {
         }
         sessions.connected(player.getUUID(), player.getUUID(), player.getGameProfile().getName());
         anchors.put(player.getUUID(), new Anchor(player.position(), player.getYRot(), player.getXRot()));
+        PacketDistributor.sendToPlayer(player,
+                new ServerHelloPayload(AuthProtocol.AUTH_PROTOCOL_VERSION,
+                        AuthProtocol.MOD_VERSION, AuthProtocol.REQUIRED_FEATURES));
         LOGGER.debug("[MCTGAuth] Authentication started: player={} uuid={}",
                 player.getGameProfile().getName(), player.getUUID());
     }

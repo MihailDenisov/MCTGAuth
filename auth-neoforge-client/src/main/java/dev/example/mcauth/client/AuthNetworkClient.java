@@ -26,6 +26,7 @@ public final class AuthNetworkClient implements AutoCloseable {
     private final AtomicLong connectionGeneration = new AtomicLong();
     private volatile AuthChallengePayload challenge;
     private volatile String normalizedIdentity;
+    private volatile boolean authenticationApplicable;
     private volatile AuthFailureReason terminalFailure;
     private volatile Consumer<ClientAuthState> stateListener = ignored -> { };
     private volatile Consumer<AuthFailurePayload> failureListener = ignored -> { };
@@ -44,24 +45,38 @@ public final class AuthNetworkClient implements AutoCloseable {
     }
 
     public void connected(String minecraftName) {
+        connected(minecraftName, true);
+    }
+
+    public void connected(String minecraftName, boolean authenticationApplicable) {
         connectionGeneration.incrementAndGet();
         clearTransient();
         terminalFailure = null;
         normalizedIdentity = AuthProtocol.normalizeMinecraftName(minecraftName);
-        transition(ClientAuthState.NEGOTIATING);
+        this.authenticationApplicable = authenticationApplicable;
+        transition(ClientAuthState.PASSIVE);
     }
 
-    public void challenge(AuthChallengePayload value) {
+    public boolean activate() {
+        if (!authenticationApplicable || !state.compareAndSet(ClientAuthState.PASSIVE, ClientAuthState.NEGOTIATING)) {
+            return false;
+        }
+        notifyState();
+        return true;
+    }
+
+    public boolean challenge(AuthChallengePayload value) {
         if (state.get() != ClientAuthState.NEGOTIATING && state.get() != ClientAuthState.FAILED
-                && state.get() != ClientAuthState.WAITING_FOR_RESULT) return;
+                && state.get() != ClientAuthState.WAITING_FOR_RESULT) return false;
         challenge = value;
         transition(ClientAuthState.WAITING_FOR_PASSWORD);
+        return true;
     }
 
     public ChallengeDisposition handleChallenge(AuthChallengePayload value, String storedPassword,
                                                  boolean autoAuthenticate) {
         Objects.requireNonNull(storedPassword, "storedPassword");
-        challenge(value);
+        if (!challenge(value)) return ChallengeDisposition.IGNORED;
         if (autoAuthenticate && !storedPassword.isEmpty() && submit(storedPassword.toCharArray())) {
             return ChallengeDisposition.AUTO_SUBMITTED;
         }
@@ -128,7 +143,9 @@ public final class AuthNetworkClient implements AutoCloseable {
     }
 
     public boolean failure(AuthFailurePayload failure) {
-        if (state.get() == ClientAuthState.TERMINAL_FAILURE) return false;
+        ClientAuthState current = state.get();
+        if (current == ClientAuthState.DISCONNECTED || current == ClientAuthState.PASSIVE
+                || current == ClientAuthState.TERMINAL_FAILURE) return false;
         credentials.clear();
         if (failure.terminal()) {
             connectionGeneration.incrementAndGet();
@@ -146,6 +163,7 @@ public final class AuthNetworkClient implements AutoCloseable {
         connectionGeneration.incrementAndGet();
         clearTransient();
         normalizedIdentity = null;
+        authenticationApplicable = false;
         if (terminalFailure == null) transition(ClientAuthState.DISCONNECTED);
     }
 
@@ -153,6 +171,7 @@ public final class AuthNetworkClient implements AutoCloseable {
         connectionGeneration.incrementAndGet();
         clearTransient();
         normalizedIdentity = null;
+        authenticationApplicable = false;
         terminalFailure = null;
         transition(ClientAuthState.DISCONNECTED);
     }
@@ -173,6 +192,13 @@ public final class AuthNetworkClient implements AutoCloseable {
 
     public ClientAuthState state() { return state.get(); }
     public long connectionGeneration() { return connectionGeneration.get(); }
+    public boolean mayActivate() {
+        return authenticationApplicable && state.get() == ClientAuthState.PASSIVE;
+    }
+    public boolean isActive() {
+        ClientAuthState current = state.get();
+        return current != ClientAuthState.DISCONNECTED && current != ClientAuthState.PASSIVE;
+    }
     public boolean maySendForGeneration(long generation) {
         ClientAuthState current = state.get();
         return generation == connectionGeneration.get() && terminalFailure == null
@@ -190,5 +216,5 @@ public final class AuthNetworkClient implements AutoCloseable {
         derivationExecutor.shutdownNow();
     }
 
-    public enum ChallengeDisposition { AUTO_SUBMITTED, INTERACTIVE_REQUIRED }
+    public enum ChallengeDisposition { AUTO_SUBMITTED, INTERACTIVE_REQUIRED, IGNORED }
 }

@@ -1,6 +1,6 @@
 # Устранение неполадок MCTGAuth
 
-Руководство предназначено для MCTGAuth 0.4.1, Java 21, Minecraft 1.21.1 и NeoForge 21.1.244 (или совместимого выпуска 21.1.x). Сначала соберите диагностику, затем меняйте конфигурацию. Никогда не отправляйте в issue или чат пароли, данные verifier, proof, nonce, salt, API-токены, токены Telegram или содержимое секретного environment/config-файла.
+Руководство предназначено для MCTGAuth 0.4.2, Java 21, Minecraft 1.21.1 и NeoForge 21.1.244 (или совместимого выпуска 21.1.x). Сначала соберите диагностику, затем меняйте конфигурацию. Никогда не отправляйте в issue или чат пароли, данные verifier, proof, nonce, salt, API-токены, токены Telegram или содержимое секретного environment/config-файла.
 
 ## Безопасные первичные проверки
 
@@ -62,7 +62,7 @@ sudo awk -F= '/^[A-Z][A-Z0-9_]*=/{print $1}' /etc/minecraft-auth.env
 
 ## Minecraft-сервер не синхронизируется
 
-Серверному моду нужны Java 21, совместимый `mctgauth-server-0.4.1.jar` и отдельный серверный `config/mctgauth-server.toml`. Проверьте, что `backend.baseUrl` — HTTPS URL backend, `backend.serverId` равен backend `SERVER_ID`, а `backend.apiToken` совпадает с `AUTH_API_TOKEN`. Дополнительная переменная `MCTGAUTH_API_TOKEN` имеет приоритет над TOML. Сравнивайте токены только приватно и не выводите их.
+Серверному моду нужны Java 21, совместимый `mctgauth-server-0.4.2.jar` и отдельный серверный `config/mctgauth-server.toml`. Проверьте, что `backend.baseUrl` — HTTPS URL backend, `backend.serverId` равен backend `SERVER_ID`, а `backend.apiToken` совпадает с `AUTH_API_TOKEN`. Дополнительная переменная `MCTGAUTH_API_TOKEN` имеет приоритет над TOML. Сравнивайте токены только приватно и не выводите их.
 
 Для синхронизации не нужен входящий порт: сервер выполняет исходящие HTTPS-запросы. При отсутствии токена синхронизация отключается, но ранее синхронизированные включённые аккаунты остаются доступны из локального cache. Исправляйте неверную конфигурацию, не отключая проверку TLS.
 

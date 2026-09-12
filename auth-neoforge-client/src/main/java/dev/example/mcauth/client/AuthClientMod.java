@@ -47,7 +47,8 @@ public final class AuthClientMod {
     }
 
     private void registerPayloads(RegisterPayloadHandlersEvent event) {
-        var registrar = event.registrar(AuthProtocol.NETWORK_VERSION);
+        // Client support is optional until a server explicitly advertises MCTGAuth.
+        var registrar = event.registrar(AuthProtocol.NETWORK_VERSION).optional();
         registrar.playToServer(ClientHelloPayload.TYPE, ClientHelloPayload.STREAM_CODEC,
                 (payload, context) -> context.disconnect(Component.translatable("mctgauth.error.internal")));
         registrar.playToServer(AuthResponsePayload.TYPE, AuthResponsePayload.STREAM_CODEC,
@@ -71,38 +72,58 @@ public final class AuthClientMod {
 
     private void onLogin(ClientPlayerNetworkEvent.LoggingIn event) {
         storedPasswordRejected = false;
-        controller.connected(event.getPlayer().getGameProfile().getName());
-        LOGGER.debug("[MCTGAuth] Authentication connection started: generation={}",
-                controller.connectionGeneration());
-        PacketDistributor.sendToServer(new ClientHelloPayload(AuthProtocol.AUTH_PROTOCOL_VERSION,
-                AuthProtocol.MOD_VERSION, AuthProtocol.REQUIRED_FEATURES));
+        boolean integratedServer = MctgAuthConnectionClassifier.isIntegratedServer(event);
+        controller.connected(event.getPlayer().getGameProfile().getName(), !integratedServer);
+        LOGGER.debug("[MCTGAuth] Connection opened: generation={} mode={}",
+                controller.connectionGeneration(), controller.state());
+        if (integratedServer) {
+            LOGGER.debug("[MCTGAuth] Integrated server detected; MCTGAuth authentication is not applicable");
+        } else {
+            LOGGER.debug("[MCTGAuth] No MCTGAuth capability detected; authentication remains inactive");
+        }
     }
 
     private void onLogout(ClientPlayerNetworkEvent.LoggingOut event) {
         storedPasswordRejected = false;
+        ClientAuthState previousState = controller.state();
         controller.disconnected();
-        LOGGER.debug("[MCTGAuth] Connection closed: state={} generation={}",
-                controller.state(), controller.connectionGeneration());
+        LOGGER.debug("[MCTGAuth] Connection closed: generation={} previousMode={}",
+                controller.connectionGeneration(), previousState);
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.screen instanceof MCTGAuthSettingsScreen) minecraft.setScreen(null);
     }
 
     private void serverHello(ServerHelloPayload payload, IPayloadContext context) {
+        if (!controller.mayActivate()) {
+            LOGGER.debug("[MCTGAuth] Ignored server capability outside a passive applicable connection: generation={} mode={}",
+                    controller.connectionGeneration(), controller.state());
+            return;
+        }
+        LOGGER.debug("[MCTGAuth] Server capability detected: protocol={} generation={}",
+                payload.protocolVersion(), controller.connectionGeneration());
+        controller.activate();
         if (payload.protocolVersion() != AuthProtocol.AUTH_PROTOCOL_VERSION
                 || (AuthProtocol.REQUIRED_FEATURES & payload.requiredFeatureBits()) != payload.requiredFeatureBits()) {
             recordFailure(new AuthFailurePayload(null,
                     AuthFailureReason.PROTOCOL_MISMATCH, false, 0));
             context.disconnect(Component.translatable("mctgauth.error.protocol_mismatch"));
+            return;
         }
+        LOGGER.debug("[MCTGAuth] Authentication activated: generation={}", controller.connectionGeneration());
+        PacketDistributor.sendToServer(new ClientHelloPayload(AuthProtocol.AUTH_PROTOCOL_VERSION,
+                AuthProtocol.MOD_VERSION, AuthProtocol.REQUIRED_FEATURES));
     }
 
     private void challenge(AuthChallengePayload payload, IPayloadContext context) {
         MCTGAuthClientConfig.Snapshot saved = config.snapshot();
-        if (!storedPasswordRejected && controller.handleChallenge(payload, saved.password(),
-                saved.autoAuthenticate()) == AuthNetworkClient.ChallengeDisposition.AUTO_SUBMITTED) {
+        AuthNetworkClient.ChallengeDisposition disposition = !storedPasswordRejected
+                ? controller.handleChallenge(payload, saved.password(), saved.autoAuthenticate())
+                : controller.challenge(payload) ? AuthNetworkClient.ChallengeDisposition.INTERACTIVE_REQUIRED
+                : AuthNetworkClient.ChallengeDisposition.IGNORED;
+        if (disposition == AuthNetworkClient.ChallengeDisposition.AUTO_SUBMITTED
+                || disposition == AuthNetworkClient.ChallengeDisposition.IGNORED) {
             return;
         }
-        if (storedPasswordRejected) controller.challenge(payload);
         Minecraft minecraft = Minecraft.getInstance();
         minecraft.setScreen(new MCTGAuthSettingsScreen(null, config, controller, true, storedPasswordRejected));
     }

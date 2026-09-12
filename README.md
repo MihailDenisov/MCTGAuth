@@ -4,7 +4,7 @@
 
 MCTGAuth is a Java 21 authentication and support system for Minecraft 1.21.1 on NeoForge 21.1.244. A Telegram bot manages registration, account ownership, tickets, moderation, and password rotation; separate client and dedicated-server mods perform replay-resistant login without transmitting the plaintext password.
 
-Current version: **0.4.1**.
+Current version: **0.4.2**.
 
 ## Architecture
 
@@ -65,9 +65,9 @@ On Linux/macOS use `./gradlew`. For backend development, copy the examples from 
 ## Release artifacts
 
 ```text
-auth-backend/build/distributions/auth-backend-0.4.1.tar.gz
-auth-neoforge-server/build/libs/mctgauth-server-0.4.1.jar
-auth-neoforge-client/build/libs/mctgauth-client-0.4.1.jar
+auth-backend/build/distributions/auth-backend-0.4.2.tar.gz
+auth-neoforge-server/build/libs/mctgauth-server-0.4.2.jar
+auth-neoforge-client/build/libs/mctgauth-client-0.4.2.jar
 ```
 
 ```powershell

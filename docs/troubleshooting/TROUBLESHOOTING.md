@@ -1,6 +1,6 @@
 # MCTGAuth Troubleshooting
 
-This guide is for MCTGAuth 0.4.1 with Java 21, Minecraft 1.21.1, and NeoForge 21.1.244 (or a compatible 21.1.x release). Collect diagnostics before changing configuration. Never paste passwords, verifier material, proofs, nonces, salts, API tokens, Telegram bot tokens, or the contents of a secret environment/configuration file into an issue or chat.
+This guide is for MCTGAuth 0.4.2 with Java 21, Minecraft 1.21.1, and NeoForge 21.1.244 (or a compatible 21.1.x release). Collect diagnostics before changing configuration. Never paste passwords, verifier material, proofs, nonces, salts, API tokens, Telegram bot tokens, or the contents of a secret environment/configuration file into an issue or chat.
 
 ## Safe first checks
 
@@ -62,7 +62,7 @@ Check the backend logs for a redacted startup/configuration error and the bot's 
 
 ## Minecraft server cannot synchronize
 
-The server mod needs Java 21, the matching `mctgauth-server-0.4.1.jar`, and a dedicated-server-only `config/mctgauth-server.toml`. Check that `backend.baseUrl` is the HTTPS backend URL, `backend.serverId` equals backend `SERVER_ID`, and `backend.apiToken` is the same value as `AUTH_API_TOKEN`. The optional `MCTGAUTH_API_TOKEN` environment override takes priority over the TOML value. Compare tokens privately; never print either value.
+The server mod needs Java 21, the matching `mctgauth-server-0.4.2.jar`, and a dedicated-server-only `config/mctgauth-server.toml`. Check that `backend.baseUrl` is the HTTPS backend URL, `backend.serverId` equals backend `SERVER_ID`, and `backend.apiToken` is the same value as `AUTH_API_TOKEN`. The optional `MCTGAUTH_API_TOKEN` environment override takes priority over the TOML value. Compare tokens privately; never print either value.
 
 No inbound port allocation is required for synchronization. The server makes outbound HTTPS requests. If the token is absent, synchronization is disabled but previously synchronized enabled accounts remain available from the local cache. Invalid enabled backend configuration must be corrected rather than bypassing TLS verification.
 
