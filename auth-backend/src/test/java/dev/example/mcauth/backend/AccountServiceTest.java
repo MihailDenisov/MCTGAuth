@@ -92,6 +92,8 @@ class AccountServiceTest {
             });
             assertTrue(details.contains("Rule violation"));
             assertTrue(details.contains("AltNick"));
+            assertTrue(details.contains("\"previousEnabled\":true"));
+            assertTrue(details.contains("\"newEnabled\":false"));
             assertEquals(altId, context.accounts.search(moderator, "altnick").getFirst().id());
         }
     }

@@ -214,7 +214,8 @@ public final class AccountService {
                     moderator.telegramId(), moderator.usernameSnapshot(), now);
             audit.record(connection, eventType.name(), null, accountId, moderator.telegramId(),
                     moderator.usernameSnapshot(), now,
-                    Map.of("minecraftNickname", account.nickname(), "reason", safeReason));
+                    Map.of("minecraftNickname", account.nickname(), "previousEnabled", account.enabled(),
+                            "newEnabled", enabled, "reason", safeReason));
             AccountView changed = new AccountView(account.id(), account.ownerTelegramId(), account.nickname(),
                     account.licensed(), enabled, account.creationMethod(), account.credentialVersion(),
                     account.createdAt());

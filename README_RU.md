@@ -4,7 +4,7 @@
 
 MCTGAuth — система авторизации и поддержки на Java 21 для Minecraft 1.21.1 и NeoForge 21.1.244. Telegram-бот управляет регистрацией, владельцами аккаунтов, обращениями, модерацией и сменой паролей; отдельные клиентский и серверный моды выполняют защищённую от повторного воспроизведения авторизацию без передачи пароля в открытом виде.
 
-Текущая версия: **0.4.2**.
+Текущая версия: **0.5.0**.
 
 ## Архитектура
 
@@ -65,9 +65,9 @@ java -version
 ## Release-артефакты
 
 ```text
-auth-backend/build/distributions/auth-backend-0.4.2.tar.gz
-auth-neoforge-server/build/libs/mctgauth-server-0.4.2.jar
-auth-neoforge-client/build/libs/mctgauth-client-0.4.2.jar
+auth-backend/build/distributions/auth-backend-0.5.0.tar.gz
+auth-neoforge-server/build/libs/mctgauth-server-0.5.0.jar
+auth-neoforge-client/build/libs/mctgauth-client-0.5.0.jar
 ```
 
 ```powershell
@@ -79,6 +79,8 @@ auth-neoforge-client/build/libs/mctgauth-client-0.4.2.jar
 ## Документация
 
 - [Русский индекс](docs/README_RU.md) · [English index](docs/README.md)
+- [Переход с 0.4.x на 0.5.0](docs/MIGRATION_0.4.x_TO_0.5.0_RU.md) · [English](docs/MIGRATION_0.4.x_TO_0.5.0.md)
+- [Примечания к выпуску 0.5.0](docs/RELEASE_NOTES_0.5.0_RU.md) · [English](docs/RELEASE_NOTES_0.5.0.md)
 - [Архитектура и ответственность](docs/PROJECT_LOGIC.md)
 - [Модель безопасности](docs/architecture/SECURITY_MODEL.md)
 - [Backend](auth-backend/README_RU.md)

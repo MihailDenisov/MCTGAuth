@@ -6,6 +6,7 @@ dependencies {
     implementation project(':auth-api')
     implementation 'org.xerial:sqlite-jdbc:3.51.1.1'
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.20.0'
+    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.20.0'
     implementation 'org.bouncycastle:bcprov-jdk18on:1.84'
 
     testImplementation platform('org.junit:junit-bom:5.11.4')

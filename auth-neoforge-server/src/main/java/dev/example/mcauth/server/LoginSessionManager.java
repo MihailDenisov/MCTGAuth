@@ -91,9 +91,10 @@ public final class LoginSessionManager implements AutoCloseable {
                 try (Argon2Verifier verifier = Argon2Verifier.parse(account.credentialVerifier())) {
                     byte[] key = verifier.derivedKey();
                     try {
-                        return ChallengeProof.verify(key, response.proof(), AuthProtocol.AUTH_PROTOCOL_VERSION,
-                                nonce, expectedSessionId, session.normalizedIdentity(), challengedVersion)
-                                ? CredentialCheck.VALID : CredentialCheck.INVALID;
+                        boolean valid = ChallengeProof.verify(key, response.proof(), AuthProtocol.AUTH_PROTOCOL_VERSION,
+                                nonce, expectedSessionId, session.normalizedIdentity(), challengedVersion);
+                        if (valid) session.authenticate();
+                        return valid ? CredentialCheck.VALID : CredentialCheck.INVALID;
                     } finally {
                         Arrays.fill(key, (byte) 0);
                     }
@@ -115,7 +116,6 @@ public final class LoginSessionManager implements AutoCloseable {
             }
             if (nonce != null) Arrays.fill(nonce, (byte) 0);
             if (check != CredentialCheck.VALID) return failedAttempt(session, expectedSessionId, AuthFailureReason.INVALID_CREDENTIALS);
-            session.authenticate();
             successes.increment();
             return Decision.success(expectedSessionId, challengedVersion);
         }

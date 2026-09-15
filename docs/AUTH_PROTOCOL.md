@@ -1,10 +1,10 @@
 # MCTGAuth Authentication Protocol V1
 
-NeoForge payload bootstrap `bootstrap-1` carries explicit `AUTH_PROTOCOL_VERSION=1`; client and server release `0.4.2` use the `mctgauth` resource namespace. The wire contract and protocol version are unchanged from 0.4.1.
+NeoForge payload bootstrap `bootstrap-1` carries explicit `AUTH_PROTOCOL_VERSION=1`; client and server release `0.5.0` use the `mctgauth` resource namespace. The wire contract and protocol version are unchanged from 0.4.2.
 
 Payload IDs are `mctgauth:client_hello`, `server_hello`, `auth_challenge`, `auth_response`, `auth_success`, `auth_failure`, and `auth_state`.
 
-The stable failure codes are `INVALID_CREDENTIALS`, `AUTH_TIMEOUT`, `TOO_MANY_ATTEMPTS`, `PROTOCOL_MISMATCH`, `CLIENT_MISSING`, `ACCOUNT_DISABLED`, `ACCOUNT_NOT_SYNCHRONIZED`, and `INTERNAL_AUTH_ERROR`. Release 0.4.2 keeps their existing wire ordinals and protocol version 1.
+The stable failure codes are `INVALID_CREDENTIALS`, `AUTH_TIMEOUT`, `TOO_MANY_ATTEMPTS`, `PROTOCOL_MISMATCH`, `CLIENT_MISSING`, `ACCOUNT_DISABLED`, `ACCOUNT_NOT_SYNCHRONIZED`, and `INTERNAL_AUTH_ERROR`. Release 0.5.0 keeps their existing wire ordinals and protocol version 1.
 
 ## Capability activation and compatibility
 

@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 public final class SyncWorker implements AutoCloseable {
-    private final BackendSyncClient backend;
+    private final SyncBackend backend;
     private final SyncEventProcessor processor;
     private final BackendStatus status;
     private final Clock clock;
@@ -26,6 +26,11 @@ public final class SyncWorker implements AutoCloseable {
     private final AtomicBoolean closed = new AtomicBoolean();
 
     public SyncWorker(BackendSyncClient backend, SyncEventProcessor processor, BackendStatus status,
+                      Clock clock, Duration normalInterval, Consumer<SyncEvent> appliedCallback) {
+        this((SyncBackend) backend, processor, status, clock, normalInterval, appliedCallback);
+    }
+
+    SyncWorker(SyncBackend backend, SyncEventProcessor processor, BackendStatus status,
                       Clock clock, Duration normalInterval, Consumer<SyncEvent> appliedCallback) {
         this.backend = Objects.requireNonNull(backend, "backend");
         this.processor = Objects.requireNonNull(processor, "processor");

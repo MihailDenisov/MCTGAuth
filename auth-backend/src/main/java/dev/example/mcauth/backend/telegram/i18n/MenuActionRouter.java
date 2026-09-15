@@ -13,6 +13,8 @@ public final class MenuActionRouter {
         LABEL_KEYS.put(BotAction.REGISTRATION_STATUS, MessageKey.MENU_REGISTRATION_STATUS);
         LABEL_KEYS.put(BotAction.ABOUT, MessageKey.MENU_ABOUT);
         LABEL_KEYS.put(BotAction.HOW_TO_PLAY, MessageKey.MENU_HOW_TO_PLAY);
+        LABEL_KEYS.put(BotAction.SERVER_MAP, MessageKey.MENU_SERVER_MAP);
+        LABEL_KEYS.put(BotAction.MODPACK_DOWNLOAD, MessageKey.MENU_MODPACK_DOWNLOAD);
         LABEL_KEYS.put(BotAction.REPORT_PROBLEM, MessageKey.MENU_REPORT_PROBLEM);
         LABEL_KEYS.put(BotAction.REPORT_VIOLATION, MessageKey.MENU_REPORT_VIOLATION);
         LABEL_KEYS.put(BotAction.MY_TICKETS, MessageKey.MENU_MY_TICKETS);

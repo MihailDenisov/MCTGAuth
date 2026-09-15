@@ -26,6 +26,10 @@ for script in "${SCRIPT_DIR}"/*.sh; do
     install -o root -g root -m 0755 "${script}" "${TOOLS_DIR}/$(basename -- "${script}")"
 done
 install -o root -g root -m 0644 "${SCRIPT_DIR}/minecraft-auth.service" "${SERVICE_FILE}"
+if [[ ! -e "${TELEGRAM_FEATURE_CONFIG_FILE}" ]]; then
+    install -o root -g minecraft-auth -m 0640 "${SCRIPT_DIR}/telegram-features.example.yaml" \
+        "${TELEGRAM_FEATURE_CONFIG_FILE}"
+fi
 
 if [[ ! -e "${ENV_FILE}" ]]; then
     touch "${ENV_FILE}"
@@ -38,12 +42,17 @@ if [[ ! -e "${ENV_FILE}" ]]; then
         'MODERATOR_TELEGRAM_IDS=123456789' \
         "AUTH_DATABASE_PATH=${DATA_DIR}/auth-backend.db" \
         'HOW_TO_PLAY_URL=https://example.invalid/minecraft' \
+        "TELEGRAM_FEATURE_CONFIG_PATH=${TELEGRAM_FEATURE_CONFIG_FILE}" \
         'HTTP_BIND_ADDRESS=127.0.0.1' \
         'HTTP_PORT=8080' \
         'AUTH_API_TOKEN=replace_with_at_least_32_random_characters' \
         'SERVER_ID=survival-main' \
         'ADMIN_LOCALE=en' \
-        'DEFAULT_USER_LOCALE=en' >"${ENV_FILE}"
+        'DEFAULT_USER_LOCALE=en' \
+        'MINECRAFT_SERVICE_NAME=minecraft.service' \
+        'MINECRAFT_SERVICE_USER=minecraft' \
+        'MINECRAFT_SERVICE_GROUP=minecraft' \
+        'MINECRAFT_GAME_DIR=/srv/minecraft' >"${ENV_FILE}"
     log_warn "Created ${ENV_FILE} with placeholders. Replace them before starting the service."
 else
     log_info "Preserved existing ${ENV_FILE}."

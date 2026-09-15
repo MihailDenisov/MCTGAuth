@@ -39,6 +39,15 @@ final class TelegramApiClient implements TelegramClient {
     }
 
     @Override
+    public TelegramMembership getChatMembership(String channel, long telegramUserId)
+            throws IOException, InterruptedException {
+        ObjectNode body = json.createObjectNode();
+        body.put("chat_id", channel);
+        body.put("user_id", telegramUserId);
+        return TelegramMembership.fromChatMember(call("getChatMember", body).path("result"));
+    }
+
+    @Override
     public long sendMessage(long chatId, String text, JsonNode replyMarkup) throws IOException, InterruptedException {
         ObjectNode body = json.createObjectNode();
         body.put("chat_id", chatId);

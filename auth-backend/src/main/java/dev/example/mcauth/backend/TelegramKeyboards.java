@@ -12,10 +12,12 @@ import dev.example.mcauth.backend.telegram.i18n.MessageKey;
 final class TelegramKeyboards {
     private final ObjectMapper json;
     private final LocalizationService localization;
+    private final TelegramFeatureConfig features;
 
-    TelegramKeyboards(ObjectMapper json, LocalizationService localization) {
+    TelegramKeyboards(ObjectMapper json, LocalizationService localization, TelegramFeatureConfig features) {
         this.json = json;
         this.localization = localization;
+        this.features = features;
     }
 
     ObjectNode userMenu(BotLocale locale, boolean registered, boolean moderator) {
@@ -27,6 +29,8 @@ final class TelegramKeyboards {
             rows.add(actions(locale, BotAction.SETTINGS));
         } else {
             rows.add(actions(locale, BotAction.HOW_TO_PLAY));
+            if (features.modpackDownloadUrl() != null) rows.add(actions(locale, BotAction.MODPACK_DOWNLOAD));
+            if (features.serverMapUrl() != null) rows.add(actions(locale, BotAction.SERVER_MAP));
             rows.add(actions(locale, BotAction.REPORT_PROBLEM, BotAction.REPORT_VIOLATION));
             rows.add(actions(locale, BotAction.MY_TICKETS, BotAction.MY_ACCOUNT));
             rows.add(actions(locale, BotAction.SETTINGS));

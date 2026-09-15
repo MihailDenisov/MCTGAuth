@@ -18,6 +18,7 @@
   "mctgauth.error.protocol_mismatch": "Incompatible MCTGAuth Client version.",
   "mctgauth.error.mod_required": "This server requires MCTGAuth Client. Install the required mod and reconnect.",
   "mctgauth.error.account_disabled": "Your account is disabled. Contact the server administration.",
+  "mctgauth.error.full_reset": "Server authentication data has been reset.\nYou must register again before joining the server.",
   "mctgauth.error.account_not_synchronized": "Your account has not been synchronized with this server yet.\n\nWait for synchronization to complete or contact an administrator.",
   "mctgauth.error.internal": "Server authentication is temporarily unavailable."
 }

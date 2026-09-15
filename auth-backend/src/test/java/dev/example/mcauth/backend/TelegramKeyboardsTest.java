@@ -8,12 +8,13 @@ import org.junit.jupiter.api.Test;
 import java.time.ZoneOffset;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class TelegramKeyboardsTest {
     @Test
     void submenusAndWizardsExposeLocalizedNavigation() {
         TelegramKeyboards keyboards = new TelegramKeyboards(
-                new ObjectMapper(), new LocalizationService(ZoneOffset.UTC));
+                new ObjectMapper(), new LocalizationService(ZoneOffset.UTC), TelegramFeatureConfig.defaults());
 
         String userWizard = keyboards.wizard(BotLocale.ENGLISH, false).toString();
         assertTrue(userWizard.contains("⬅️ Back"));
@@ -30,5 +31,22 @@ class TelegramKeyboardsTest {
         assertTrue(keyboards.attachmentMenu(BotLocale.ENGLISH).toString().contains("Back"));
         assertTrue(keyboards.yesNo(BotLocale.RUSSIAN).toString().contains("Главное меню"));
         assertTrue(keyboards.languageSelector(BotLocale.RUSSIAN).toString().contains("Главное меню"));
+    }
+
+    @Test
+    void optionalUserLinksAppearOnlyWhenConfigured() {
+        LocalizationService localization = new LocalizationService(ZoneOffset.UTC);
+        TelegramKeyboards disabled = new TelegramKeyboards(
+                new ObjectMapper(), localization, TelegramFeatureConfig.defaults());
+        String disabledMenu = disabled.userMenu(BotLocale.ENGLISH, true, false).toString();
+        assertFalse(disabledMenu.contains("Server Map"));
+        assertFalse(disabledMenu.contains("Download Modpack"));
+
+        TelegramFeatureConfig features = new TelegramFeatureConfig(null, null, false, null, null,
+                "https://map.example.com/", "https://t.me/example/123");
+        String enabledMenu = new TelegramKeyboards(new ObjectMapper(), localization, features)
+                .userMenu(BotLocale.ENGLISH, true, false).toString();
+        assertTrue(enabledMenu.contains("Server Map"));
+        assertTrue(enabledMenu.contains("Download Modpack"));
     }
 }

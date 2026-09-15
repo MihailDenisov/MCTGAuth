@@ -28,11 +28,11 @@
 
 ## Требования к VPS
 
-Нужны Debian, Java 21, `sqlite3`, `curl`, `tar`, `flock` и `systemd`. Например, если репозитории вашей версии Debian предоставляют OpenJDK 21:
+Нужны Debian, Java 21, `sqlite3`, `jq`, `curl`, `tar`, `flock` и `systemd`. Например, если репозитории вашей версии Debian предоставляют OpenJDK 21:
 
 ```bash
 sudo apt update
-sudo apt install openjdk-21-jre-headless sqlite3 curl tar util-linux
+sudo apt install openjdk-21-jre-headless sqlite3 jq curl tar util-linux
 java -version
 ```
 
@@ -101,7 +101,16 @@ sudo chmod 0600 /etc/minecraft-auth.env
 TELEGRAM_BOT_USERNAME=ExampleBot
 ```
 
-Без этой переменной backend 0.4.2 намеренно не запустится: значение нужно для корректной обработки команд вида `/menu@ExampleBot` и игнорирования команд, адресованных другим ботам в общей группе.
+Без этой переменной backend 0.5.0 намеренно не запустится: значение нужно для корректной обработки команд вида `/menu@ExampleBot` и игнорирования команд, адресованных другим ботам в общей группе.
+
+`install.sh` также создаёт только при отсутствии `/etc/minecraft-auth-telegram.yaml` (`root:minecraft-auth`, `0640`). Укажите его через `TELEGRAM_FEATURE_CONFIG_PATH`. В UTF-8 YAML независимо настраиваются многострочные `howToPlay.en`/`ru`, необязательная `registration.subscriptionCheck`, `serverMap` и `modpackDownload`; все дополнительные функции по умолчанию выключены. Некорректные ссылки скрываются с предупреждением, а встроенный текст остаётся fallback. Изменения загружаются при старте:
+
+```bash
+sudoedit /etc/minecraft-auth-telegram.yaml
+sudo /opt/minecraft-auth-tools/restart.sh
+```
+
+Для проверки подписки бот вызывает Telegram `getChatMember`. Добавьте бота администратором обязательного канала; временная ошибка Telegram не считается отсутствием подписки и оставляет кнопку повторной проверки.
 
 ## 3. Загрузка и активация release
 
@@ -119,7 +128,7 @@ Developer PC
 
 ```bash
 sudo /opt/minecraft-auth-tools/update.sh \
-  /home/authbot/uploads/auth-backend-0.4.2.tar.gz
+  /home/authbot/uploads/auth-backend-0.5.0.tar.gz
 ```
 
 Либо передайте распакованный `installDist`:
@@ -204,6 +213,26 @@ sudo /opt/minecraft-auth-tools/restore.sh --yes \
 
 Перед заменой текущей БД `restore.sh` создаёт дополнительный emergency backup, останавливает systemd-службу, проверяет восстановленную БД, сохраняет владельца/права, запускает backend и выполняет health check.
 
+## Полный сброс тестовых данных перед production
+
+`reset-database.sh` — разрушительная операция. Задайте в `/etc/minecraft-auth.env` реальные `MINECRAFT_SERVICE_NAME`, `MINECRAFT_SERVICE_USER`, `MINECRAFT_SERVICE_GROUP` и абсолютный `MINECRAFT_GAME_DIR`, затем сначала выполните:
+
+```bash
+sudo /opt/minecraft-auth-tools/reset-database.sh --dry-run
+```
+
+Для подтверждаемого запуска:
+
+```bash
+sudo /opt/minecraft-auth-tools/reset-database.sh
+```
+
+Введите точную фразу `RESET ALL AUTH DATA`. `--yes` разрешён только для заранее проверенной автоматизации. Скрипт под общим lock останавливает Minecraft и backend, создаёт SQLite `.backup` и архив `mctgauth/accounts.json*` с правами `0600`, очищает runtime-таблицы одной транзакцией, проверяет foreign keys/integrity, записывает пустой локальный auth cache и запускает ранее активные службы.
+
+Сохраняются `schema_migrations`, схема версии 4, `moderators`, `moderator_permissions` и последовательности ID. Удаляются все users, accounts/nicknames/verifier, tickets и связанные данные, password changes, pending actions, sync events, remote commands и audit. После полного сброса каждый ранее зарегистрированный пользователь должен зарегистрироваться заново. Все ранее выданные пароли Minecraft становятся недействительными.
+
+Для restore используйте парные файлы из одного запуска: восстановите DB через `restore.sh`, при остановленных службах распакуйте соответствующий `mctgauth-cache-*.tar.gz` в каталог `mctgauth`, исправьте owner/mode и только затем запускайте обе стороны. Backend DB без соответствующего cache восстанавливать нельзя; иначе оставьте Minecraft остановленным до полной новой синхронизации.
+
 ## Очистка
 
 По умолчанию сохраняются минимум пять новых release и десять backup-файлов. Активный и непосредственно предыдущий release защищены независимо от лимита.
@@ -245,5 +274,5 @@ sudo ./install.sh
 - Не распаковывайте upload вручную от `root`: `update.sh` сам проверяет archive entries и запрещает ссылки/специальные файлы.
 - Не помещайте токены или `.env` в deployment archive.
 - Не восстанавливайте БД только ради отката приложения.
-- `update.sh`, `rollback.sh`, `restore.sh` и `cleanup.sh` используют общий `flock` и не выполняются одновременно.
+- `update.sh`, `rollback.sh`, `restore.sh`, `reset-database.sh` и `cleanup.sh` используют общий `flock` и не выполняются одновременно.
 - Если health check или rollback завершился ошибкой, смотрите `status.sh`, затем `logs.sh -n 200`.

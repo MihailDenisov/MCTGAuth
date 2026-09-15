@@ -24,7 +24,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
-public final class BackendSyncClient implements AutoCloseable {
+public final class BackendSyncClient implements SyncBackend {
     private static final int MAX_RESPONSE_BYTES = 1_048_576;
     private final ServerAuthConfig.Values config;
     private final char[] token;

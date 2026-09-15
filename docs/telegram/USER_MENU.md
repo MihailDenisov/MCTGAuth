@@ -41,6 +41,8 @@ English:
 
 ```text
 🎮 How to play
+📦 Download Modpack       # only when enabled
+🗺 Server Map             # only when enabled
 🛠 Report a problem    ⚠️ Report a violation
 📋 My tickets          👤 My account
 ⚙️ Settings
@@ -50,6 +52,8 @@ Russian:
 
 ```text
 🎮 Как играть
+📦 Скачать сборку         # только когда включено
+🗺 Карта сервера          # только когда включено
 🛠 Сообщить о проблеме    ⚠️ Сообщить о нарушении
 📋 Мои обращения          👤 Мой аккаунт
 ⚙️ Настройки
@@ -57,7 +61,9 @@ Russian:
 
 Settings reopens the same English/Russian selector and immediately renders the main menu in the selected language. Problem/violation reports, registration, ticket history, account management, password changes, additional-account requests, buttons, errors, enum presentation, and UTC timestamp rendering support both locales.
 
-How to Play always explains that the server uses Minecraft 1.21.1 NeoForge and that players can install the prepared modpack or AutoModPack. The pinned chat message remains the textual source of detailed instructions; `HOW_TO_PLAY_URL`, when configured, adds a convenience button only.
+How to Play uses `howToPlay.en` / `howToPlay.ru` from the UTF-8 Telegram feature YAML and falls back to the bundled localized text. `HOW_TO_PLAY_URL`, when configured, adds a detailed-guide button. Optional map and modpack reply actions expose configured HTTPS URL buttons; URLs are never callback identifiers.
+
+When the optional registration subscription gate is enabled, Apply calls Telegram `getChatMember` before any wizard state is created. Non-members receive Subscribe and stable `registration:subscription:retry` buttons. Temporary API failures receive a localized retry and are not classified as non-members.
 
 All Telegram-visible timestamps are presented in `Europe/Moscow`. UTC remains the database and business-logic representation.
 

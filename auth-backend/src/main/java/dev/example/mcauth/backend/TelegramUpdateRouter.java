@@ -31,6 +31,7 @@ final class TelegramUpdateRouter {
     private final String botUsername;
     private final long adminChatId;
     private final String howToPlayUrl;
+    private final TelegramFeatureConfig features;
     private final String serverId;
     private final TicketService registrationTickets;
     private final SupportTicketService tickets;
@@ -49,6 +50,7 @@ final class TelegramUpdateRouter {
             String botUsername,
             long adminChatId,
             String howToPlayUrl,
+            TelegramFeatureConfig features,
             String serverId,
             TicketService registrationTickets,
             SupportTicketService tickets,
@@ -63,6 +65,7 @@ final class TelegramUpdateRouter {
         this.botUsername = botUsername;
         this.adminChatId = adminChatId;
         this.howToPlayUrl = howToPlayUrl;
+        this.features = Objects.requireNonNull(features, "features");
         this.serverId = serverId;
         this.registrationTickets = registrationTickets;
         this.tickets = tickets;
@@ -73,7 +76,7 @@ final class TelegramUpdateRouter {
         this.localization = localization;
         this.locales = locales;
         this.actions = new MenuActionRouter(localization);
-        this.keyboards = new TelegramKeyboards(json, localization);
+        this.keyboards = new TelegramKeyboards(json, localization, features);
     }
 
     void handle(JsonNode update) throws IOException, InterruptedException {
@@ -200,7 +203,7 @@ final class TelegramUpdateRouter {
             return true;
         }
         if ("/register".equals(command) || action == BotAction.REGISTER) {
-            beginRegistration(chatId, telegramId, username, locale);
+            beginRegistrationWithSubscriptionGate(chatId, telegramId, username, locale);
             return true;
         }
         if (action == BotAction.REGISTRATION_STATUS) {
@@ -220,8 +223,22 @@ final class TelegramUpdateRouter {
                 buttons.add(new String[]{t(locale, MessageKey.HOW_TO_PLAY_GUIDE), howToPlayUrl});
             }
             buttons.add(new String[]{t(locale, MessageKey.BUTTON_MAIN_MENU), "nav:main"});
-            telegram.sendMessage(chatId, t(locale, MessageKey.HOW_TO_PLAY),
+            telegram.sendMessage(chatId, features.howToPlay(locale, t(locale, MessageKey.HOW_TO_PLAY)),
                     keyboards.inline(buttons.toArray(String[][]::new)));
+            return true;
+        }
+        if (action == BotAction.SERVER_MAP && features.serverMapUrl() != null) {
+            telegram.sendMessage(chatId, t(locale, MessageKey.SERVER_MAP_OPEN),
+                    keyboards.inline(new String[][]{
+                            {t(locale, MessageKey.MENU_SERVER_MAP), features.serverMapUrl()},
+                            {t(locale, MessageKey.BUTTON_MAIN_MENU), "nav:main"}}));
+            return true;
+        }
+        if (action == BotAction.MODPACK_DOWNLOAD && features.modpackDownloadUrl() != null) {
+            telegram.sendMessage(chatId, t(locale, MessageKey.MODPACK_DOWNLOAD_OPEN),
+                    keyboards.inline(new String[][]{
+                            {t(locale, MessageKey.MENU_MODPACK_DOWNLOAD), features.modpackDownloadUrl()},
+                            {t(locale, MessageKey.BUTTON_MAIN_MENU), "nav:main"}}));
             return true;
         }
         if (action == BotAction.REPORT_PROBLEM) {
@@ -486,6 +503,13 @@ final class TelegramUpdateRouter {
                 telegram.answerCallback(callbackId, t(selected, MessageKey.LANGUAGE_CHANGED));
                 return;
             }
+            if ("registration:subscription:retry".equals(data)) {
+                if (!"private".equals(chatType)) throw new WorkflowException(
+                        WorkflowException.Code.UNAUTHORIZED, "Private chat required");
+                beginRegistrationWithSubscriptionGate(chatId, telegramId, username, locale);
+                telegram.answerCallback(callbackId, t(locale, MessageKey.CALLBACK_DONE));
+                return;
+            }
             if (data.startsWith("tickets:page:")) {
                 showMyTickets(chatId, telegramId,
                         Integer.parseInt(data.substring("tickets:page:".length())), locale);
@@ -545,7 +569,8 @@ final class TelegramUpdateRouter {
             telegram.answerCallback(callbackId, t(locale, MessageKey.CALLBACK_DONE));
         } catch (WorkflowException | IllegalArgumentException exception) {
             if (exception instanceof WorkflowException workflow
-                    && workflow.code() == WorkflowException.Code.INVALID_STATE
+                    && (workflow.code() == WorkflowException.Code.INVALID_STATE
+                    || workflow.code() == WorkflowException.Code.NOT_FOUND)
                     && data.startsWith("ticket:")) {
                 String[] parts = data.split(":");
                 String ticketId = parts.length >= 2 ? parts[1] : "0";
@@ -554,6 +579,16 @@ final class TelegramUpdateRouter {
                                 {t(locale, MessageKey.BUTTON_REFRESH), "ticket:" + ticketId + ":refresh"},
                                 {t(locale, MessageKey.BUTTON_ADMIN_MENU), "nav:admin"}
                         }));
+            } else if (exception instanceof WorkflowException workflow
+                    && (workflow.code() == WorkflowException.Code.INVALID_STATE
+                    || workflow.code() == WorkflowException.Code.NOT_FOUND
+                    || workflow.code() == WorkflowException.Code.UNAUTHORIZED)
+                    && (data.startsWith("admin-account:") || data.startsWith("account:"))) {
+                boolean adminAction = data.startsWith("admin-account:");
+                telegram.sendMessage(chatId, t(locale, MessageKey.STALE_ACTION),
+                        keyboards.inline(new String[][]{{t(locale,
+                                adminAction ? MessageKey.BUTTON_ADMIN_MENU : MessageKey.BUTTON_MAIN_MENU),
+                                adminAction ? "nav:admin" : "nav:main"}}));
             }
             telegram.answerCallback(callbackId, localizedError(locale, exception));
         }
@@ -808,6 +843,42 @@ final class TelegramUpdateRouter {
         }
         sessions.put(telegramId, new FlowSession(FlowKind.REG_NICKNAME));
         telegram.sendMessage(chatId, t(locale, MessageKey.REG_NICKNAME), keyboards.wizard(locale, false));
+    }
+
+    private void beginRegistrationWithSubscriptionGate(
+            long chatId, long telegramId, String username, BotLocale locale)
+            throws IOException, InterruptedException {
+        if (accounts.hasEnabledAccount(telegramId) || tickets.pendingRegistration(telegramId).isPresent()
+                || !features.subscriptionCheckEnabled()) {
+            beginRegistration(chatId, telegramId, username, locale);
+            return;
+        }
+        if (!features.subscriptionCheckAvailable()) {
+            showSubscriptionGate(chatId, locale, MessageKey.SUBSCRIPTION_UNAVAILABLE, false);
+            return;
+        }
+        try {
+            if (telegram.getChatMembership(features.subscriptionChannel(), telegramId)
+                    == TelegramMembership.SUBSCRIBED) {
+                beginRegistration(chatId, telegramId, username, locale);
+            } else {
+                showSubscriptionGate(chatId, locale, MessageKey.SUBSCRIPTION_REQUIRED, true);
+            }
+        } catch (IOException exception) {
+            showSubscriptionGate(chatId, locale, MessageKey.SUBSCRIPTION_UNAVAILABLE, false);
+        }
+    }
+
+    private void showSubscriptionGate(long chatId, BotLocale locale, MessageKey message, boolean allowSubscribe)
+            throws IOException, InterruptedException {
+        List<String[]> buttons = new ArrayList<>();
+        if (allowSubscribe && features.subscriptionChannelUrl() != null) {
+            buttons.add(new String[]{t(locale, MessageKey.BUTTON_SUBSCRIBE), features.subscriptionChannelUrl()});
+        }
+        buttons.add(new String[]{t(locale, MessageKey.BUTTON_CHECK_SUBSCRIPTION),
+                "registration:subscription:retry"});
+        buttons.add(new String[]{t(locale, MessageKey.BUTTON_MAIN_MENU), "nav:main"});
+        telegram.sendMessage(chatId, t(locale, message), keyboards.inline(buttons.toArray(String[][]::new)));
     }
 
     private void finishRegistration(

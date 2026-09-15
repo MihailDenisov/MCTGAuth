@@ -1,6 +1,6 @@
 # VPS deployment runbook
 
-This runbook describes the public scripts in `deploy/vps/`. They target a Debian VPS with Java 21, SQLite, curl, tar, util-linux/flock, and systemd. Run state-changing commands as `root` (normally through `sudo`). The scripts do not need Git or Docker.
+This runbook describes the public scripts in `deploy/vps/`. They target a Debian VPS with Java 21, SQLite, jq, curl, tar, util-linux/flock, and systemd. Run state-changing commands as `root` (normally through `sudo`). The scripts do not need Git or Docker.
 
 ## Layout and service
 
@@ -47,6 +47,7 @@ All paths below may be replaced with the corresponding path to a copied script. 
 | `restore.sh [--yes] <backup.db>` | root, lock | Accepts only a regular, validated backup in the backup directory and an integrity-valid DB. Confirmation requires exactly `yes` unless `--yes`; creates an emergency backup, restores to a temporary DB, stops service, removes WAL/SHM, replaces the DB, and restarts/checks health. On failed health the restored DB remains and the emergency path is reported. |
 | `rollback.sh [--yes] [--force-incompatible] [release-name]` | root, lock | Selects the previous release by default or a named release, validates it, and refuses if the DB schema exceeds its `max.schema.version` unless forced. Switches code only. Failed health restores the original release; if that also fails, it exits with both releases unhealthy. |
 | `cleanup.sh [--dry-run]` | root, lock | Defaults to `KEEP_RELEASES=5` and `KEEP_BACKUPS=10`. Keeps at least two releases, protects active/previous releases, and removes only validated old targets. Dry-run reports removals without changing files. |
+| `reset-database.sh [--dry-run] [--yes]` | root, lock | Destructive full authentication reset. Stops backend/Minecraft, backs up both stores, empties runtime tables transactionally, clears the server verifier cache/sync history, then restarts services that were active. |
 | `start.sh` | root | Runs `systemctl start minecraft-auth.service`. No health wait is performed. |
 | `stop.sh` | root | Runs `systemctl stop minecraft-auth.service`. |
 | `restart.sh` | root | Restarts the service and waits for health. A restart can succeed while health fails; in that case it exits nonzero. |
@@ -56,6 +57,25 @@ All paths below may be replaced with the corresponding path to a copied script. 
 | `logs.sh [-f] [-n <1..100000>]` | journal access | Shows 100 service lines by default. `-n` changes the count; `-f` follows. Unknown options and invalid counts fail. |
 
 The shared `common.sh` is not an operator command. The nested `tests/safety_test.sh` is a helper test and is not copied by `install.sh`.
+
+## Destructive full authentication reset
+
+Set `MINECRAFT_SERVICE_NAME`, `MINECRAFT_SERVICE_USER`, `MINECRAFT_SERVICE_GROUP`, and absolute `MINECRAFT_GAME_DIR` in `/etc/minecraft-auth.env`. Preview counts first:
+
+```bash
+sudo /opt/minecraft-auth-tools/reset-database.sh --dry-run
+sudo /opt/minecraft-auth-tools/reset-database.sh
+# automation only, after separately confirming the target:
+sudo /opt/minecraft-auth-tools/reset-database.sh --yes
+```
+
+Without `--yes`, the exact phrase `RESET ALL AUTH DATA` is required. The command preserves the schema, `schema_migrations`, `moderators`, `moderator_permissions`, and SQLite ID sequences. It deletes users, all ticket/type/message/attachment/decision data, accounts/nicknames/verifiers/password-change history, pending moderator input, sync events, remote commands, and audit history. Preserving ID sequences prevents old Telegram callbacks from colliding with future records; callbacks for deleted records become localized stale actions.
+
+Before mutation it stops Minecraft and the backend, creates a consistent SQLite backup and a `mctgauth-cache-*.tar.gz` backup under `/var/backups/minecraft-auth`, and sets both to `0600 root:root`. It then replaces `<MINECRAFT_GAME_DIR>/mctgauth/accounts.json` with an empty schema-valid store and removes its `.bak`/`.tmp`, clearing cached verifiers, processed event IDs, and command IDs. Players online at the time are disconnected by normal Minecraft service shutdown. There is no window in which an empty backend runs beside the old authentication cache.
+
+After a full reset, every previously registered user must register again. All previously issued Minecraft authentication passwords become invalid. Client installations may still display an obsolete password in `config/mctgauth-client.json`; it no longer authenticates and should be replaced after registration.
+
+For coordinated restore, stop both services, restore the reported `auth-backend-*.db` with `restore.sh`, stop the backend again after its health check, extract the matching cache archive into `<MINECRAFT_GAME_DIR>/mctgauth`, restore Minecraft service ownership/mode, then start backend and Minecraft. Never restore only one side. For intentional backend-only recovery, leave Minecraft stopped and perform a fresh full resynchronization before accepting players.
 
 ## Update transaction and compatibility
 

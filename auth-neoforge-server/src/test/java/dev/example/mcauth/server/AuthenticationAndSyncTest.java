@@ -96,6 +96,21 @@ class AuthenticationAndSyncTest {
     }
 
     @Test
+    void disabledCachedAccountIsDeniedWithoutBackend() {
+        processor.apply(accountEvent(UUID.randomUUID(), SyncEventType.ACCOUNT_CREATED, 1, true, true));
+        processor.apply(accountEvent(UUID.randomUUID(), SyncEventType.ACCOUNT_DISABLED, 1, false, false));
+        LoginSessionManager manager = new LoginSessionManager(store, Clock.systemUTC(), new SecureRandom(),
+                Duration.ofSeconds(60), 3);
+        UUID player = UUID.randomUUID();
+        manager.connected(player, player, "Test_Player");
+        var decision = manager.hello(player,
+                new ClientHelloPayload(1, "0.4.2", AuthProtocol.REQUIRED_FEATURES));
+        assertFalse(decision.authenticated());
+        assertEquals(dev.example.mcauth.protocol.AuthFailureReason.ACCOUNT_DISABLED, decision.failure());
+        manager.close();
+    }
+
+    @Test
     void expiredAndWrongProofFailAndUnknownAccountNeverFallsBack() {
         processor.apply(accountEvent(UUID.randomUUID(), SyncEventType.ACCOUNT_CREATED, 1, true, true));
         MutableClock clock = new MutableClock(Instant.parse("2026-09-12T12:00:00Z"));

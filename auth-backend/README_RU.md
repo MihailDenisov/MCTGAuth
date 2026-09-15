@@ -1,4 +1,4 @@
-# MCTGAuth backend 0.4.2
+# MCTGAuth backend 0.5.0
 
 [English version](README.md)
 
@@ -19,7 +19,8 @@
 | `TELEGRAM_ADMIN_CHAT_ID` | Да | `-1000000000000` | Нет; ненулевой числовой ID приватной группы, обычно отрицательный. |
 | `MODERATOR_TELEGRAM_IDS` | Да | `123456789,987654321` | Нет; положительные числовые ID через запятую. |
 | `AUTH_DATABASE_PATH` | Нет | `./data/auth-backend.db` | Чувствительный путь; service account нужен доступ к родителю. |
-| `HOW_TO_PLAY_URL` | Да | `https://t.me/example/1` | Нет; абсолютный HTTPS URL бота. |
+| `HOW_TO_PLAY_URL` | Нет | `https://t.me/example/1` | Необязательный абсолютный HTTPS URL подробной инструкции. |
+| `TELEGRAM_FEATURE_CONFIG_PATH` | Нет | `./config/telegram-features.yaml` | UTF-8 YAML с локализованным текстом, проверкой подписки, картой и сборкой. |
 | `HTTP_BIND_ADDRESS` | Нет | `127.0.0.1` | Нет; только loopback, публичный bind отклоняется. |
 | `HTTP_PORT` | Нет | `8080` | Нет; от 1 до 65535. |
 | `AUTH_API_TOKEN` | Да | `<32+ случайных символа>` | Bearer-секрет; 32–512 непробельных символов. |
@@ -29,11 +30,15 @@
 
 Примеры — placeholders. Настоящие значения задавайте только в окружении процесса или `/etc/minecraft-auth.env`, не печатайте файл. `AUTH_API_TOKEN` должен совпадать с `backend.apiToken` server-мода или override `MCTGAUTH_API_TOKEN`.
 
+Формат описан в [`telegram-features.example.yaml`](src/main/resources/telegram-features.example.yaml). `howToPlay.en` и `howToPlay.ru` поддерживают многострочный UTF-8; отсутствующее/пустое значение использует встроенный перевод. `serverMap` и `modpackDownload` по умолчанию выключены и показываются только с корректным абсолютным HTTPS URL. `registration.subscriptionCheck.enabled` ограничивает только начало новой регистрации. Подписанными считаются creator, administrator, member и restricted с `is_member=true`; ошибка Telegram показывает повторную проверку, а не ложное отсутствие подписки. Для надёжного `getChatMember` назначьте бота администратором обязательного канала. Файл загружается при старте; после изменения перезапустите backend.
+
 ## Telegram
 
 Поддерживаются `/start`, `/menu`, `/adm`, `/admin` (alias), `/register`, `/tickets`, `/account`, `/cancel`; работают формы `/command` и `/command@ConfiguredBotUsername`, а обращённые к другому боту команды игнорируются. `/start` даёт новому пользователю выбор языка. В private-чате `/menu` всегда открывает обычное меню, даже модератору; `/adm`/`/admin` требуют включённый числовой ID модератора. В настроенной admin-группе `/menu`, `/adm`, `/cancel` открывают или сбрасывают inline-панель и повторно проверяют права. Другие группы игнорируются.
 
 Пользователь регистрируется, смотрит заявки/аккаунты, сообщает о проблеме или нарушении, запрашивает дополнительный аккаунт, меняет пароль и выбирает English/Russian. Одобрение регистрации/дополнительного аккаунта атомарно создаёт аккаунт, verifier, аудит и sync event; активная регистрация не дублируется. Модератор фильтрует/ищет заявки, отвечает privately, одобряет/отклоняет допустимые заявки, меняет состояние, смотрит статистику/аккаунты и ставит `FORCE_AUTH_SYNC`, `AUTH_STATUS`, `RESYNC_PLAYER`. Отключение требует причины/подтверждения; изменения аудируются, уведомляют владельца, создают sync и idempotentны. Карточки Telegram — представления, SQLite — источник истины. Pending-ответ модератора private, назначен по numeric ID и истекает через 30 минут.
+
+Отключённый синхронизированный аккаунт остаётся запрещённым с `ACCOUNT_DISABLED` при недоступном backend. `ACCOUNT_DISABLED` и `ACCOUNT_ENABLED` сохраняются локально до ACK; при `disconnectPlayerWhenAccountDisabled=true` сервер отключает онлайн-игрока в основном потоке. Изменение относится только к выбранному Minecraft-аккаунту и не затрагивает остальные аккаунты владельца.
 
 В БД и бизнес-логике timestamp — UTC `Instant`; в Telegram — `Europe/Moscow`, `dd.MM.yyyy HH:mm MSK`/`МСК`.
 

@@ -36,6 +36,8 @@ Ticket actions use stable callbacks such as `ticket:1042:take`, `ticket:1042:rep
 
 Search also returns matching Minecraft accounts. A private account card shows the owner identity, enabled state, credential version, and registration time. `admin-account:<id>:disable` starts an optional-reason step and requires a separate confirmation callback before the backend atomically changes `enabled`, emits `ACCOUNT_DISABLED`, and writes the audit entry. `admin-account:<id>:enable` restores access and emits `ACCOUNT_ENABLED`. Repeating the current state is idempotent and creates no redundant transition.
 
+Audit details include the moderator numeric Telegram ID, target account/nickname, explicit previous/new enabled values, optional internal reason, and UTC timestamp. One owner may have multiple accounts; every callback includes the selected account ID and changes only that record.
+
 The shared group uses `ADMIN_LOCALE`; private prompts use the moderator's stored locale. Reply composition, search input, and manual registration occur privately. A group Reply callback persists a moderator-specific action with a 30-minute expiry, and the same assigned moderator completes it by sending private text.
 
 Server management menus:

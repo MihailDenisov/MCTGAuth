@@ -1,0 +1,20 @@
+# UTF-8, non-secret Telegram feature configuration. Loaded once at backend startup.
+howToPlay:
+  en: |
+    Replace this text with your English server instructions.
+  ru: |
+    Замените этот текст инструкцией вашего сервера на русском языке.
+
+registration:
+  subscriptionCheck:
+    enabled: false
+    channel: "@example_channel"
+    channelUrl: "https://t.me/example_channel"
+
+serverMap:
+  enabled: false
+  url: "https://map.example.com/"
+
+modpackDownload:
+  enabled: false
+  url: "https://t.me/example_channel/123"

@@ -16,6 +16,8 @@ public final class BackendApplication {
         BackendDatabase database = BackendDatabase.open(config.databasePath());
         Clock clock = Clock.systemUTC();
         ObjectMapper json = new ObjectMapper();
+        TelegramFeatureConfig telegramFeatures = TelegramFeatureConfig.load(
+                config.telegramFeatureConfigPath());
         ModeratorService moderators = new ModeratorService(database, clock);
         moderators.synchronizeConfiguredModerators(config.moderatorTelegramIds());
         AuditService audit = new AuditService(database, json, clock);
@@ -35,7 +37,8 @@ public final class BackendApplication {
         LocaleResolver locales = new LocaleResolver(
                 database, config.adminLocale(), config.defaultUserLocale());
         TelegramBotService bot = new TelegramBotService(
-                config.telegramBotToken(), config.telegramBotUsername(), config.telegramAdminChatId(), config.howToPlayUrl(),
+                config.telegramBotToken(), config.telegramBotUsername(), config.telegramAdminChatId(),
+                config.howToPlayUrl(), telegramFeatures,
                 config.serverId(), tickets, supportTickets, accounts, moderators, remoteCommands,
                 pendingModeratorActions, localization, locales, json);
         BackendHttpServer http = new BackendHttpServer(

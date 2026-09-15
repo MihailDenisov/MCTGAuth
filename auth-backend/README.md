@@ -1,4 +1,4 @@
-# MCTGAuth backend 0.4.2
+# MCTGAuth backend 0.5.0
 
 [Русская версия](README_RU.md)
 
@@ -19,7 +19,8 @@ Java 21 (JDK/JRE), outbound HTTPS to `api.telegram.org`, a BotFather bot, a priv
 | `TELEGRAM_ADMIN_CHAT_ID` | Yes | `-1000000000000` | No; non-zero numeric private admin-group ID (often negative). |
 | `MODERATOR_TELEGRAM_IDS` | Yes | `123456789,987654321` | No; comma-separated positive numeric authorization IDs. |
 | `AUTH_DATABASE_PATH` | No | `./data/auth-backend.db` | Sensitive path; service must write its parent. |
-| `HOW_TO_PLAY_URL` | Yes | `https://t.me/example/1` | No; absolute HTTPS URL shown by the bot. |
+| `HOW_TO_PLAY_URL` | No | `https://t.me/example/1` | No; optional absolute HTTPS detailed-guide URL. |
+| `TELEGRAM_FEATURE_CONFIG_PATH` | No | `./config/telegram-features.yaml` | UTF-8 YAML for localized text, subscription gate, map, and modpack links. |
 | `HTTP_BIND_ADDRESS` | No | `127.0.0.1` | No; must resolve loopback; public bind rejected. |
 | `HTTP_PORT` | No | `8080` | No; 1–65535. |
 | `AUTH_API_TOKEN` | Yes | `<32+ random characters>` | Secret bearer token; 32–512 non-whitespace characters. |
@@ -29,11 +30,15 @@ Java 21 (JDK/JRE), outbound HTTPS to `api.telegram.org`, a BotFather bot, a priv
 
 Examples are placeholders. Set real values only in process environment or `/etc/minecraft-auth.env`; never print that file. `AUTH_API_TOKEN` must match server `backend.apiToken` or optional `MCTGAUTH_API_TOKEN`.
 
+The feature file follows [`telegram-features.example.yaml`](src/main/resources/telegram-features.example.yaml). `howToPlay.en` and `howToPlay.ru` accept multiline UTF-8 text; a missing/blank value uses the built-in localized fallback. `serverMap` and `modpackDownload` are disabled by default and only render when enabled with a valid absolute HTTPS URL. `registration.subscriptionCheck.enabled` gates only new registration wizards. Membership includes creator, administrator, member, and restricted members with `is_member=true`; Telegram failures show a retry instead of claiming the user is unsubscribed. For reliable `getChatMember` results, make the bot an administrator of the required channel. Configuration is loaded at startup; restart the backend after editing it.
+
 ## Telegram behavior
 
 Supported commands are `/start`, `/menu`, `/adm`, `/admin` (alias), `/register`, `/tickets`, `/account`, and `/cancel`; both `/command` and `/command@ConfiguredBotUsername` forms work, while commands addressed to another bot are ignored. `/start` gives a new user the language selector. In private chat `/menu` always opens the ordinary user menu, even for moderators; `/adm`/`/admin` require an enabled moderator ID. In the configured admin group `/menu`, `/adm`, and `/cancel` open/reset the inline admin panel and re-check authorization. Other groups are ignored.
 
 Users register, view tickets/accounts, report problems or violations, request additional accounts, change passwords, and select English/Russian. Registration/add-account approval atomically creates the account, verifier, audit record, and sync event; an active registration is not duplicated. Moderators filter/search tickets, reply privately, approve/reject eligible tickets, transition support tickets, view statistics, inspect accounts, and queue `FORCE_AUTH_SYNC`, `AUTH_STATUS`, or `RESYNC_PLAYER`. Disable requires reason/confirmation; enable/disable is audited, notifies the owner, emits sync, and is idempotent. Telegram cards are projections; SQLite is authoritative. Pending moderator replies are private, assigned by numeric ID, and expire after 30 minutes.
+
+Disabled synchronized accounts remain denied with `ACCOUNT_DISABLED` during backend outages. `ACCOUNT_DISABLED` and `ACCOUNT_ENABLED` are persisted locally before acknowledgement; the server can disconnect an online disabled player on its main thread when `disconnectPlayerWhenAccountDisabled=true`. State changes target one Minecraft account and never disable sibling accounts owned by the same Telegram user.
 
 Database/business timestamps are UTC `Instant`; Telegram renders them as `Europe/Moscow`, `dd.MM.yyyy HH:mm MSK` (or `МСК`).
 

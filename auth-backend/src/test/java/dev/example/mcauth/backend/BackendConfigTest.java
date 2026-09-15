@@ -19,6 +19,7 @@ class BackendConfigTest {
         assertEquals("survival-main", config.serverId());
         assertEquals(BotLocale.ENGLISH, config.adminLocale());
         assertEquals(BotLocale.ENGLISH, config.defaultUserLocale());
+        assertEquals(null, config.howToPlayUrl());
 
         environment.put("HTTP_BIND_ADDRESS", "0.0.0.0");
         assertThrows(IllegalArgumentException.class,
@@ -54,7 +55,6 @@ class BackendConfigTest {
         environment.put("TELEGRAM_BOT_USERNAME", "ExampleBot");
         environment.put("TELEGRAM_ADMIN_CHAT_ID", "-1001234567890");
         environment.put("MODERATOR_TELEGRAM_IDS", "123,456");
-        environment.put("HOW_TO_PLAY_URL", "https://t.me/example/1");
         environment.put("AUTH_API_TOKEN", "0123456789abcdef0123456789abcdef");
         environment.put("SERVER_ID", "survival-main");
         return environment;

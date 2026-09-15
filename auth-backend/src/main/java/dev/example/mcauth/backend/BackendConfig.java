@@ -17,6 +17,7 @@ public record BackendConfig(
         long telegramAdminChatId,
         Set<Long> moderatorTelegramIds,
         String howToPlayUrl,
+        Path telegramFeatureConfigPath,
         String httpBindAddress,
         int httpPort,
         String authApiToken,
@@ -40,7 +41,8 @@ public record BackendConfig(
         if (moderatorTelegramIds.isEmpty()) {
             throw new IllegalArgumentException("MODERATOR_TELEGRAM_IDS must contain at least one numeric ID");
         }
-        validateHttpsUrl(howToPlayUrl);
+        howToPlayUrl = optionalHttpsUrl(howToPlayUrl, "HOW_TO_PLAY_URL");
+        telegramFeatureConfigPath = telegramFeatureConfigPath.toAbsolutePath().normalize();
         validateLoopback(httpBindAddress);
         if (httpPort < 1 || httpPort > 65_535) {
             throw new IllegalArgumentException("HTTP_PORT must be between 1 and 65535");
@@ -71,7 +73,9 @@ public record BackendConfig(
                 required(environment, "TELEGRAM_BOT_USERNAME"),
                 parseChatId(required(environment, "TELEGRAM_ADMIN_CHAT_ID")),
                 moderatorIds,
-                required(environment, "HOW_TO_PLAY_URL"),
+                environment.get("HOW_TO_PLAY_URL"),
+                Path.of(environment.getOrDefault(
+                        "TELEGRAM_FEATURE_CONFIG_PATH", "./config/telegram-features.yaml")),
                 environment.getOrDefault("HTTP_BIND_ADDRESS", "127.0.0.1").trim(),
                 Integer.parseInt(environment.getOrDefault("HTTP_PORT", "8080").trim()),
                 required(environment, "AUTH_API_TOKEN"),
@@ -105,14 +109,17 @@ public record BackendConfig(
         return id;
     }
 
-    private static void validateHttpsUrl(String value) {
+    private static String optionalHttpsUrl(String value, String key) {
+        if (value == null || value.isBlank()) return null;
         try {
-            URI uri = URI.create(value);
+            String normalized = value.strip();
+            URI uri = URI.create(normalized);
             if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null) {
-                throw new IllegalArgumentException("HOW_TO_PLAY_URL must be an absolute HTTPS URL");
+                throw new IllegalArgumentException(key + " must be an absolute HTTPS URL");
             }
+            return normalized;
         } catch (RuntimeException exception) {
-            throw new IllegalArgumentException("HOW_TO_PLAY_URL must be an absolute HTTPS URL");
+            throw new IllegalArgumentException(key + " must be an absolute HTTPS URL");
         }
     }
 

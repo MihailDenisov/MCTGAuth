@@ -19,6 +19,7 @@ public final class TelegramBotService implements AutoCloseable {
             String botUsername,
             long adminChatId,
             String howToPlayUrl,
+            TelegramFeatureConfig features,
             String serverId,
             TicketService registrationTickets,
             SupportTicketService supportTickets,
@@ -29,7 +30,7 @@ public final class TelegramBotService implements AutoCloseable {
             LocalizationService localization,
             LocaleResolver locales,
             ObjectMapper json) {
-        this(new TelegramApiClient(botToken, json), botUsername, adminChatId, howToPlayUrl, serverId,
+        this(new TelegramApiClient(botToken, json), botUsername, adminChatId, howToPlayUrl, features, serverId,
                 registrationTickets, supportTickets, accounts, moderators, remoteCommands,
                 pendingModeratorActions, localization, locales, json);
     }
@@ -39,6 +40,7 @@ public final class TelegramBotService implements AutoCloseable {
             String botUsername,
             long adminChatId,
             String howToPlayUrl,
+            TelegramFeatureConfig features,
             String serverId,
             TicketService registrationTickets,
             SupportTicketService supportTickets,
@@ -50,7 +52,7 @@ public final class TelegramBotService implements AutoCloseable {
             LocaleResolver locales,
             ObjectMapper json) {
         this.telegram = Objects.requireNonNull(telegram, "telegram");
-        this.router = new TelegramUpdateRouter(telegram, botUsername, adminChatId, howToPlayUrl, serverId,
+        this.router = new TelegramUpdateRouter(telegram, botUsername, adminChatId, howToPlayUrl, features, serverId,
                 registrationTickets, supportTickets, accounts, moderators, remoteCommands,
                 pendingModeratorActions, localization, locales, json);
     }

@@ -9,6 +9,7 @@ import dev.example.mcauth.backend.telegram.i18n.MessageKey;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -357,6 +358,26 @@ class TelegramUpdateRouterTest {
     }
 
     @Test
+    void callbacksForDeletedRecordsAreSafeLocalizedNoOps() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        try (BackendTestContext context = new BackendTestContext(temporaryDirectory.resolve("deleted-callback.db"))) {
+            FakeTelegramClient telegram = new FakeTelegramClient();
+            LocalizationService localization = new LocalizationService(ZoneOffset.UTC);
+            LocaleResolver locales = new LocaleResolver(
+                    context.database, BotLocale.ENGLISH, BotLocale.ENGLISH);
+            TelegramUpdateRouter router = router(telegram, json, context, localization, locales);
+
+            router.handle(callback(json, BackendTestContext.MODERATOR_ID, "moderator", "ticket:999999:approve"));
+            assertTrue(telegram.last().text().contains("already been processed"));
+
+            router.handle(callback(json, BackendTestContext.MODERATOR_ID, "moderator",
+                    "admin-account:999999:disable"));
+            assertTrue(telegram.last().text().contains("no longer available"));
+            assertTrue(telegram.last().markup().toString().contains("nav:admin"));
+        }
+    }
+
+    @Test
     void violationWizardAcceptsUnknownAndKnownOffenderNicknames() throws Exception {
         ObjectMapper json = new ObjectMapper();
         try (BackendTestContext context = new BackendTestContext(temporaryDirectory.resolve("violations.db"))) {
@@ -419,11 +440,99 @@ class TelegramUpdateRouterTest {
         }
     }
 
+    @Test
+    void subscriptionGateBlocksWithoutDraftAndRetryContinuesRegistration() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        try (BackendTestContext context = new BackendTestContext(temporaryDirectory.resolve("subscription.db"))) {
+            FakeTelegramClient telegram = new FakeTelegramClient();
+            telegram.membership = TelegramMembership.NOT_SUBSCRIBED;
+            LocalizationService localization = new LocalizationService(ZoneOffset.UTC);
+            LocaleResolver locales = new LocaleResolver(
+                    context.database, BotLocale.ENGLISH, BotLocale.ENGLISH);
+            TelegramFeatureConfig features = new TelegramFeatureConfig(null, null, true,
+                    "@example_channel", "https://t.me/example_channel", null, null);
+            TelegramUpdateRouter router = router(telegram, json, context, localization, locales, features);
+
+            router.handle(message(json, 6501L, "subscriber", "en",
+                    localization.text(BotLocale.ENGLISH, MessageKey.MENU_APPLY)));
+            assertTrue(telegram.last().text().contains("must subscribe"));
+            assertTrue(telegram.last().markup().toString().contains("registration:subscription:retry"));
+            assertTrue(context.tickets.pendingRegistration(6501L).isEmpty());
+
+            telegram.membership = TelegramMembership.SUBSCRIBED;
+            router.handle(callback(json, 6501L, "subscriber", "registration:subscription:retry"));
+            assertTrue(telegram.last().text().contains("nickname"));
+        }
+    }
+
+    @Test
+    void subscriptionFailureIsRetryableAndDisabledGateStartsNormally() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        try (BackendTestContext context = new BackendTestContext(temporaryDirectory.resolve("subscription-error.db"))) {
+            FakeTelegramClient telegram = new FakeTelegramClient();
+            LocalizationService localization = new LocalizationService(ZoneOffset.UTC);
+            LocaleResolver locales = new LocaleResolver(
+                    context.database, BotLocale.ENGLISH, BotLocale.ENGLISH);
+            TelegramFeatureConfig enabled = new TelegramFeatureConfig(null, null, true,
+                    "@example_channel", "https://t.me/example_channel", null, null);
+            TelegramUpdateRouter router = router(telegram, json, context, localization, locales, enabled);
+            telegram.membershipFailure = true;
+
+            router.handle(message(json, 6502L, "network", "en",
+                    localization.text(BotLocale.ENGLISH, MessageKey.MENU_APPLY)));
+            assertTrue(telegram.last().text().contains("temporarily unavailable"));
+            assertTrue(context.tickets.pendingRegistration(6502L).isEmpty());
+
+            telegram.membershipFailure = false;
+            router.handle(callback(json, 6502L, "network", "registration:subscription:retry"));
+            assertTrue(telegram.last().text().contains("nickname"));
+
+            FakeTelegramClient disabledTelegram = new FakeTelegramClient();
+            TelegramUpdateRouter disabled = router(disabledTelegram, json, context,
+                    localization, locales, TelegramFeatureConfig.defaults());
+            disabled.handle(message(json, 6503L, "ungated", "en",
+                    localization.text(BotLocale.ENGLISH, MessageKey.MENU_APPLY)));
+            assertTrue(disabledTelegram.last().text().contains("nickname"));
+            assertTrue(context.tickets.pendingRegistration(6503L).isEmpty());
+        }
+    }
+
+    @Test
+    void configuredHowToPlayAndExternalLinksAreRendered() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        try (BackendTestContext context = new BackendTestContext(temporaryDirectory.resolve("features.db"))) {
+            FakeTelegramClient telegram = new FakeTelegramClient();
+            LocalizationService localization = new LocalizationService(ZoneOffset.UTC);
+            LocaleResolver locales = new LocaleResolver(
+                    context.database, BotLocale.ENGLISH, BotLocale.ENGLISH);
+            TelegramFeatureConfig features = new TelegramFeatureConfig(
+                    "Configured English guide", "Настроенная русская инструкция", false, null, null,
+                    "https://map.example.com/", "https://t.me/example/123");
+            TelegramUpdateRouter router = router(telegram, json, context, localization, locales, features);
+
+            router.handle(message(json, 6504L, "features", "en",
+                    localization.text(BotLocale.ENGLISH, MessageKey.MENU_HOW_TO_PLAY)));
+            assertEquals("Configured English guide", telegram.last().text());
+            router.handle(message(json, 6504L, "features", "en",
+                    localization.text(BotLocale.ENGLISH, MessageKey.MENU_SERVER_MAP)));
+            assertTrue(telegram.last().markup().toString().contains("https://map.example.com/"));
+            router.handle(message(json, 6504L, "features", "en",
+                    localization.text(BotLocale.ENGLISH, MessageKey.MENU_MODPACK_DOWNLOAD)));
+            assertTrue(telegram.last().markup().toString().contains("https://t.me/example/123"));
+        }
+    }
+
     private static TelegramUpdateRouter router(
             TelegramClient telegram, ObjectMapper json, BackendTestContext context,
             LocalizationService localization, LocaleResolver locales) {
+        return router(telegram, json, context, localization, locales, TelegramFeatureConfig.defaults());
+    }
+
+    private static TelegramUpdateRouter router(
+            TelegramClient telegram, ObjectMapper json, BackendTestContext context,
+            LocalizationService localization, LocaleResolver locales, TelegramFeatureConfig features) {
         return new TelegramUpdateRouter(telegram, "ExampleBot", ADMIN_CHAT_ID,
-                "https://t.me/example/1", "survival-main", context.registrations,
+                "https://t.me/example/1", features, "survival-main", context.registrations,
                 context.tickets, context.accounts, context.moderators, context.commands,
                 context.pendingModeratorActions, localization, locales, json);
     }
@@ -470,8 +579,15 @@ class TelegramUpdateRouterTest {
 
     private static final class FakeTelegramClient implements TelegramClient {
         private final List<SentMessage> sent = new ArrayList<>();
+        private TelegramMembership membership = TelegramMembership.SUBSCRIBED;
+        private boolean membershipFailure;
 
         @Override public List<JsonNode> getUpdates(long offset) { return List.of(); }
+
+        @Override public TelegramMembership getChatMembership(String channel, long telegramUserId) throws IOException {
+            if (membershipFailure) throw new IOException("simulated Telegram outage");
+            return membership;
+        }
 
         @Override public long sendMessage(long chatId, String text, JsonNode replyMarkup) {
             sent.add(new SentMessage(chatId, text, replyMarkup));

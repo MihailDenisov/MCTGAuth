@@ -56,7 +56,7 @@ Activate an uploaded package:
 
 ```bash
 sudo /opt/minecraft-auth-tools/update.sh \
-  /home/authbot/uploads/auth-backend-0.4.2.tar.gz
+  /home/authbot/uploads/auth-backend-0.5.0.tar.gz
 ```
 
 `update.sh` accepts either the generated `.tar.gz` or an `installDist` directory whose root contains `bin/`, `lib/`, and `release.properties`. It never executes installer code from the upload.
@@ -121,7 +121,7 @@ Backups use SQLite `.backup`, followed by `PRAGMA integrity_check`; raw WAL-mode
 ```json
 {
   "application": "minecraft-auth-backend",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "commit": "unknown",
   "buildTime": "2026-09-11T17:05:00Z",
   "schemaVersion": 4

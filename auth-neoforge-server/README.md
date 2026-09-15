@@ -1,6 +1,6 @@
 # MCTGAuth Server
 
-Dedicated-server-only NeoForge 1.21.1 mod. Required runtime is Java 21, Minecraft 1.21.1, and NeoForge 21.1.244 (or a compatible 21.1.x release). Install only `build/libs/mctgauth-server-0.4.2.jar` in the dedicated server's `mods/` directory; never distribute this server JAR to players.
+Dedicated-server-only NeoForge 1.21.1 mod. Required runtime is Java 21, Minecraft 1.21.1, and NeoForge 21.1.244 (or a compatible 21.1.x release). Install only `build/libs/mctgauth-server-0.5.0.jar` in the dedicated server's `mods/` directory; never distribute this server JAR to players.
 
 The server stores synchronized Argon2id verifier records and idempotency metadata in `<server>/mctgauth/accounts.json` (schema 1). Writes use `accounts.json.tmp` and `accounts.json.bak`; protect the whole `mctgauth/` directory. The cache contains no plaintext password. Existing synchronized accounts remain locally login-capable while the backend is unavailable.
 

@@ -1,6 +1,6 @@
 # Руководство развёртывания на VPS
 
-Документ описывает публичные скрипты из `deploy/vps/`. Они рассчитаны на Debian VPS с Java 21, SQLite, curl, tar, util-linux/flock и systemd. Изменяющие состояние команды запускайте от `root` (обычно через `sudo`). Git и Docker на VPS не нужны.
+Документ описывает публичные скрипты из `deploy/vps/`. Они рассчитаны на Debian VPS с Java 21, SQLite, jq, curl, tar, util-linux/flock и systemd. Изменяющие состояние команды запускайте от `root` (обычно через `sudo`). Git и Docker на VPS не нужны.
 
 ## Каталоги и служба
 
@@ -47,6 +47,7 @@ sudo ./install.sh [installDist-directory-or-tar.gz]
 | `restore.sh [--yes] <backup.db>` | root, lock | Принимает только обычный проверенный backup из backup-каталога и целую БД. Без `--yes` требует точный ответ `yes`; создаёт emergency backup, восстанавливает временную БД, останавливает службу, удаляет WAL/SHM, заменяет БД и запускает/проверяет службу. При плохом health восстановленная БД остаётся, путь emergency backup сообщается. |
 | `rollback.sh [--yes] [--force-incompatible] [release-name]` | root, lock | По умолчанию выбирает предыдущий релиз либо указанный; проверяет его и блокирует откат, если схема БД новее `max.schema.version`, кроме режима force. Меняет только код. При плохом health возвращает исходный релиз; если и он не запускается, сообщает, что оба релиза нездоровы. |
 | `cleanup.sh [--dry-run]` | root, lock | По умолчанию `KEEP_RELEASES=5`, `KEEP_BACKUPS=10`. Сохраняет минимум два релиза, защищает активный/предыдущий и удаляет только проверенные старые цели. Dry-run ничего не удаляет. |
+| `reset-database.sh [--dry-run] [--yes]` | root, lock | Разрушительный полный сброс авторизации. Останавливает backend/Minecraft, сохраняет обе стороны, транзакционно очищает runtime-таблицы и локальный verifier/sync cache, затем запускает ранее активные службы. |
 | `start.sh` | root | Выполняет `systemctl start minecraft-auth.service`; health не ожидается. |
 | `stop.sh` | root | Выполняет `systemctl stop minecraft-auth.service`. |
 | `restart.sh` | root | Перезапускает службу и ждёт health. При провале health возвращает ненулевой код. |
@@ -56,6 +57,25 @@ sudo ./install.sh [installDist-directory-or-tar.gz]
 | `logs.sh [-f] [-n <1..100000>]` | доступ к journal | По умолчанию показывает 100 строк службы. `-n` меняет число, `-f` включает follow. Неизвестные параметры и неверное число строк отклоняются. |
 
 Общий `common.sh` не является командой оператора. Вложенный `tests/safety_test.sh` — тестовый помощник и `install.sh` его не копирует.
+
+## Разрушительный полный сброс авторизации
+
+Задайте `MINECRAFT_SERVICE_NAME`, `MINECRAFT_SERVICE_USER`, `MINECRAFT_SERVICE_GROUP` и абсолютный `MINECRAFT_GAME_DIR` в `/etc/minecraft-auth.env`. Сначала проверьте количества:
+
+```bash
+sudo /opt/minecraft-auth-tools/reset-database.sh --dry-run
+sudo /opt/minecraft-auth-tools/reset-database.sh
+# только для автоматизации после отдельной проверки цели:
+sudo /opt/minecraft-auth-tools/reset-database.sh --yes
+```
+
+Без `--yes` требуется точная фраза `RESET ALL AUTH DATA`. Сохраняются схема, `schema_migrations`, `moderators`, `moderator_permissions` и SQLite-последовательности ID. Удаляются пользователи, все заявки/данные типов/сообщения/вложения/решения, аккаунты/ники/verifier/история смены паролей, pending-ввод модераторов, sync events, remote commands и аудит. Сохранение последовательностей исключает совпадение старых Telegram callback с новыми объектами; callback удалённых объектов становится локализованным устаревшим действием.
+
+До изменений скрипт останавливает Minecraft и backend, создаёт согласованный SQLite backup и `mctgauth-cache-*.tar.gz` в `/var/backups/minecraft-auth`, задавая обоим `0600 root:root`. Затем `<MINECRAFT_GAME_DIR>/mctgauth/accounts.json` заменяется пустым валидным хранилищем, а `.bak`/`.tmp` удаляются: исчезают verifier, processed event ID и command ID. Онлайн-игроки отключаются штатной остановкой Minecraft. Backend с пустой БД никогда не работает одновременно со старым cache.
+
+После полного сброса каждый ранее зарегистрированный пользователь должен зарегистрироваться заново. Все ранее выданные пароли Minecraft становятся недействительными. На клиенте старое значение может остаться в `config/mctgauth-client.json`; оно уже не работает и заменяется после новой регистрации.
+
+Для согласованного restore остановите обе службы, восстановите указанный `auth-backend-*.db` через `restore.sh`, после его health check снова остановите backend, распакуйте парный cache-архив в `<MINECRAFT_GAME_DIR>/mctgauth`, восстановите владельца/права и запустите backend и Minecraft. Не восстанавливайте только одну сторону. При намеренном backend-only restore оставьте Minecraft остановленным и выполните полную новую синхронизацию до допуска игроков.
 
 ## Транзакция обновления и совместимость
 

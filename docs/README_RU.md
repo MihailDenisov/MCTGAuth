@@ -2,7 +2,7 @@
 
 [English version](README.md) · [Главная страница проекта](../README_RU.md)
 
-Этот индекс разделяет инструкции оператора и проектные материалы. Текущий release: Java 21, Minecraft 1.21.1, NeoForge 21.1.244 и MCTGAuth 0.4.2.
+Этот индекс разделяет инструкции оператора и проектные материалы. Текущий release: Java 21, Minecraft 1.21.1, NeoForge 21.1.244 и MCTGAuth 0.5.0.
 
 ## Начните здесь
 
@@ -12,6 +12,8 @@
 - [MCTGAuth Client](../auth-neoforge-client/README_RU.md)
 - [Production-развёртывание и эксплуатация](deployment/DEPLOYMENT_RU.md)
 - [Устранение неполадок](troubleshooting/TROUBLESHOOTING_RU.md)
+- [Примечания к выпуску 0.5.0](RELEASE_NOTES_0.5.0_RU.md)
+- [Переход с 0.4.x на 0.5.0](MIGRATION_0.4.x_TO_0.5.0_RU.md)
 - [Примечания к выпуску 0.4.2](RELEASE_NOTES_0.4.2_RU.md)
 
 ## Архитектура и безопасность
