@@ -1,6 +1,6 @@
 # MCTGAuth Client
 
-Клиентский мод NeoForge 1.21.1 для сервера MCTGAuth. Требуется Java 21, Minecraft 1.21.1 и NeoForge 21.1.244 (либо совместимая версия 1.21.x). Установите только `build/libs/mctgauth-client-0.5.0.jar` в `mods/` игрока.
+Клиентский мод NeoForge 1.21.1 для сервера MCTGAuth. Требуется Java 21, Minecraft 1.21.1 и NeoForge 21.1.244 (либо совместимая версия 1.21.x). Установите только `build/libs/mctgauth-client-0.6.4.jar` в `mods/` игрока.
 
 Клиент хранит выданный Telegram пароль в `.minecraft/config/mctgauth-client.json` в открытом виде — это решение продукта. Защитите папку конфигурации и не передавайте её другим. Это единственное разрешённое место открытого пароля: он не отправляется backend, не попадает в диагностику и не передаётся по Minecraft-протоколу. Argon2id вычисляется вне render-потока, отправляется только nonce-связанный proof HMAC-SHA256.
 

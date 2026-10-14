@@ -31,6 +31,7 @@ public final class BackendHttpServer implements AutoCloseable {
     private final BooleanSupplier telegramRunning;
     private final SyncApiService sync;
     private final RemoteCommandService commands;
+    private final ServerTelemetryService telemetry;
     private final ExecutorService executor;
     private final BuildInfo buildInfo;
 
@@ -43,6 +44,13 @@ public final class BackendHttpServer implements AutoCloseable {
             SyncApiService sync,
             RemoteCommandService commands,
             ObjectMapper json) throws IOException {
+        this(bindAddress, port, apiToken, database, telegramRunning, sync, commands, null, json);
+    }
+
+    public BackendHttpServer(
+            String bindAddress, int port, String apiToken, BackendDatabase database,
+            BooleanSupplier telegramRunning, SyncApiService sync, RemoteCommandService commands,
+            ServerTelemetryService telemetry, ObjectMapper json) throws IOException {
         this.server = HttpServer.create(new InetSocketAddress(bindAddress, port), 50);
         this.json = json;
         this.authentication = new ApiTokenAuthenticator(apiToken);
@@ -50,13 +58,91 @@ public final class BackendHttpServer implements AutoCloseable {
         this.telegramRunning = telegramRunning;
         this.sync = sync;
         this.commands = commands;
+        this.telemetry = telemetry;
         this.buildInfo = BuildInfo.load();
         server.createContext("/health", this::health);
         server.createContext("/version", this::version);
         server.createContext("/api/v1/server/events", this::events);
         server.createContext("/api/v1/server/commands", this::commands);
+        server.createContext("/api/v1/servers/heartbeat", this::heartbeat);
+        server.createContext("/api/v1/servers/player-events", this::playerEvents);
+        server.createContext("/api/v1/servers/shutdown", this::shutdown);
         this.executor = Executors.newVirtualThreadPerTaskExecutor();
         server.setExecutor(executor);
+    }
+
+    private void heartbeat(HttpExchange exchange) throws IOException {
+        if (!requireAuthentication(exchange)) return;
+        if (telemetry == null || !"POST".equals(exchange.getRequestMethod())) {
+            respond(exchange, telemetry == null ? 503 : 405, error(telemetry == null ? "unavailable" : "method_not_allowed"));
+            return;
+        }
+        try {
+            JsonNode request = readJson(exchange);
+            boolean persisted = telemetry.heartbeat(new ServerTelemetryService.Heartbeat(
+                    requiredText(request, "serverId", 64), UUID.fromString(requiredText(request, "serverInstanceId", 36)),
+                    java.time.Instant.parse(requiredText(request, "startedAt", 64)),
+                    java.time.Instant.parse(requiredText(request, "occurredAt", 64)),
+                    requiredInt(request, "onlinePlayers"), requiredInt(request, "maxPlayers")));
+            respond(exchange, persisted ? 200 : 409,
+                    persisted ? status("accepted") : error("stale_heartbeat"));
+        } catch (WorkflowException exception) {
+            respond(exchange, exception.code() == WorkflowException.Code.UNAUTHORIZED ? 403 : 400, error("request_rejected"));
+        } catch (BackendDatabase.DatabaseException exception) {
+            Throwable cause = exception.getCause();
+            System.err.println("Heartbeat persistence failed: errorType="
+                    + exception.getClass().getSimpleName() + " causeType="
+                    + (cause == null ? "unknown" : cause.getClass().getSimpleName()));
+            respond(exchange, 500, error("persistence_failed"));
+        } catch (RuntimeException exception) { respond(exchange, 400, error("invalid_request")); }
+    }
+
+    private void playerEvents(HttpExchange exchange) throws IOException {
+        if (!requireAuthentication(exchange)) return;
+        if (telemetry == null || !"POST".equals(exchange.getRequestMethod())) {
+            respond(exchange, telemetry == null ? 503 : 405, error(telemetry == null ? "unavailable" : "method_not_allowed"));
+            return;
+        }
+        try {
+            JsonNode request = readJson(exchange);
+            boolean applied = telemetry.playerEvent(new ServerTelemetryService.PlayerEvent(
+                    UUID.fromString(requiredText(request, "eventId", 36)), requiredText(request, "serverId", 64),
+                    UUID.fromString(requiredText(request, "serverInstanceId", 36)),
+                    ServerTelemetryService.PlayerEventType.valueOf(requiredText(request, "type", 32)),
+                    request.path("minecraftAccountId").asLong(-1), requiredText(request, "nickname", 16),
+                    java.time.Instant.parse(requiredText(request, "occurredAt", 64))));
+            respond(exchange, 200, status(applied ? "accepted" : "duplicate"));
+        } catch (WorkflowException exception) {
+            respond(exchange, exception.code() == WorkflowException.Code.UNAUTHORIZED ? 403 : 400, error("request_rejected"));
+        } catch (RuntimeException exception) { respond(exchange, 400, error("invalid_request")); }
+    }
+
+    private void shutdown(HttpExchange exchange) throws IOException {
+        if (!requireAuthentication(exchange)) return;
+        if (telemetry == null || !"POST".equals(exchange.getRequestMethod())) {
+            respond(exchange, telemetry == null ? 503 : 405, error(telemetry == null ? "unavailable" : "method_not_allowed"));
+            return;
+        }
+        try {
+            JsonNode request = readJson(exchange);
+            telemetry.shutdown(requiredText(request, "serverId", 64),
+                    UUID.fromString(requiredText(request, "serverInstanceId", 36)),
+                    java.time.Instant.parse(requiredText(request, "occurredAt", 64)));
+            respond(exchange, 200, status("accepted"));
+        } catch (WorkflowException exception) {
+            respond(exchange, exception.code() == WorkflowException.Code.UNAUTHORIZED ? 403 : 400, error("request_rejected"));
+        } catch (RuntimeException exception) { respond(exchange, 400, error("invalid_request")); }
+    }
+
+    private static String requiredText(JsonNode node, String field, int max) {
+        String value = node.path(field).asText("");
+        if (value.isBlank() || value.length() > max) throw new IllegalArgumentException("Invalid field");
+        return value;
+    }
+
+    private static int requiredInt(JsonNode node, String field) {
+        if (!node.has(field) || !node.path(field).canConvertToInt()) throw new IllegalArgumentException("Invalid field");
+        return node.path(field).asInt();
     }
 
     public void start() {

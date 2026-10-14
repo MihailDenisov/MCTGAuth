@@ -78,7 +78,7 @@ Ensure the client and server mods are present and compatible, and that the accou
 
 The client stores the password as plaintext in `.minecraft/config/mctgauth-client.json`; protect that file and never include it in diagnostics. Open **MCTGAuth** on the title screen or **Mods → MCTGAuth Client → Config**, save the current password, and retry. After a backend password rotation, the stored password can be rejected and must be replaced.
 
-The terminal reasons `ACCOUNT_NOT_SYNCHRONIZED`, `ACCOUNT_DISABLED`, `AUTH_TIMEOUT`, `TOO_MANY_ATTEMPTS`, `PROTOCOL_MISMATCH`, `CLIENT_MISSING`, and `INTERNAL_AUTH_ERROR` stop the current authentication lifecycle. MCTGAuth does not call Minecraft connection APIs or schedule automatic reconnects. Return to the server or reconnect manually; a reconnect performed without an MCTGAuth `Starting reconnect` log entry came from outside the mod.
+Terminal authentication reasons, including `ACCOUNT_NOT_FOUND`, `ACCOUNT_NOT_SYNCHRONIZED`, `ACCOUNT_DISABLED`, `INVALID_CREDENTIALS`, `CREDENTIAL_OUTDATED`, `AUTH_TIMEOUT`, protocol incompatibility, safe verification failure, and internal failure, stop the current authentication lifecycle. MCTGAuth does not call Minecraft connection APIs or schedule automatic reconnects. Return to the server or reconnect manually; a reconnect performed without an MCTGAuth `Starting reconnect` log entry came from outside the mod.
 
 ## AutoModPack or third-party reconnect risk
 

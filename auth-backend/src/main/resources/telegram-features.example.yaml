@@ -18,3 +18,16 @@ serverMap:
 modpackDownload:
   enabled: false
   url: "https://t.me/example_channel/123"
+
+serverStatus:
+  enabled: true
+  heartbeatTimeoutSeconds: 60
+  showPlayerCount: true
+  showPlayerList: true
+  showSessionDuration: true
+
+# Requires Bot API 9.5+, bot administrator rights, and can_manage_tags.
+memberTags:
+  enabled: false
+  chatId: <TELEGRAM_GROUP_CHAT_ID>
+  excludeChatAdministrators: true

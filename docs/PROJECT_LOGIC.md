@@ -140,3 +140,9 @@ Version 0.3 introduced, and version 0.4.1 retains, `/menu`, `/adm`, and `/cancel
 Free-form moderator input is private. When a moderator starts Reply from a shared group card, the backend persists a moderator-specific expiring action and completes it only from the same enabled, assigned moderator's private chat. Translated labels never become business identifiers. All wizard/submenu views provide localized escape navigation, and violation reports may persist a null offender nickname.
 
 Version 0.4 makes `/menu` and the localized Main menu action always return to the ordinary user-facing menu in private chat, including for moderators; `/adm` remains the administrative entry point. Moderator account search can open one authoritative account record and disable or enable it with dedicated permission checks, audit records, and `ACCOUNT_DISABLED` / `ACCOUNT_ENABLED` sync events. Disable requires an optional-reason step and a separate explicit confirmation. Telegram timestamp rendering is centralized on `Europe/Moscow`; database timestamps and expiry calculations remain UTC-based.
+
+## 18. Version 0.6 telemetry and statistics
+
+The dedicated server sends authenticated outbound heartbeats and idempotent join/leave events. A unique `serverInstanceId` is generated for every process. Game-thread callbacks capture immutable account-ID snapshots; a background worker atomically journals and posts them. The backend derives freshness from the heartbeat timeout and never exposes stale counts/lists as current. Playtime is calculated from UTC session intervals, includes active sessions, and merges overlaps before aggregation.
+
+Telegram bot blocking is a dedicated user moderation state. Blocked users receive only the localized restricted-access response. This does not disable Minecraft authentication; account disable remains a separate moderator action.

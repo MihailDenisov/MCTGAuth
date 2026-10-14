@@ -1,4 +1,4 @@
-# MCTGAuth backend 0.5.0
+# MCTGAuth backend 0.6.4
 
 [English version](README.md)
 
@@ -20,7 +20,7 @@
 | `MODERATOR_TELEGRAM_IDS` | Да | `123456789,987654321` | Нет; положительные числовые ID через запятую. |
 | `AUTH_DATABASE_PATH` | Нет | `./data/auth-backend.db` | Чувствительный путь; service account нужен доступ к родителю. |
 | `HOW_TO_PLAY_URL` | Нет | `https://t.me/example/1` | Необязательный абсолютный HTTPS URL подробной инструкции. |
-| `TELEGRAM_FEATURE_CONFIG_PATH` | Нет | `./config/telegram-features.yaml` | UTF-8 YAML с локализованным текстом, проверкой подписки, картой и сборкой. |
+| `TELEGRAM_FEATURE_CONFIG_PATH` | Нет | `./config/telegram-features.yaml` | UTF-8 YAML с локализованным текстом, ссылками, статусом сервера и необязательными тегами участников. |
 | `HTTP_BIND_ADDRESS` | Нет | `127.0.0.1` | Нет; только loopback, публичный bind отклоняется. |
 | `HTTP_PORT` | Нет | `8080` | Нет; от 1 до 65535. |
 | `AUTH_API_TOKEN` | Да | `<32+ случайных символа>` | Bearer-секрет; 32–512 непробельных символов. |
@@ -55,8 +55,26 @@
 | `GET /api/v1/server/commands?server_id=<id>` | `200`; упорядоченные неистёкшие typed-команды. |
 | `POST /api/v1/server/commands/<command-id>/started?server_id=<id>` | `200 running` или `409 invalid_state`. |
 | `POST /api/v1/server/commands/<command-id>/result?server_id=<id>` | JSON `status` `SUCCESS`/`FAILED`, структурированный `result`, необязательный safe `errorMessage`; `200` или `409 invalid_state`. |
+| `POST /api/v1/servers/heartbeat` | Аутентифицированное текущее состояние процесса и числа игроков. |
+| `POST /api/v1/servers/player-events` | Идемпотентное событие входа/выхода по account ID. |
+| `POST /api/v1/servers/shutdown` | Best-effort штатное завершение и закрытие сессий. |
 
 Ошибки: `401`/`unauthorized` с `WWW-Authenticate: Bearer`; `405`/`method_not_allowed`; неверные ID/JSON/status/query — `400`/`invalid_request`; неизвестные маршрут/ID — `404`/`not_found`; отклонённый workflow — `403`/`409` `request_rejected`. Ответы JSON с `Cache-Control: no-store`. Принимается только настроенный `SERVER_ID`; ID, expiry, ack и переходы состояний проверяются idempotently. Подробности: [`docs/api/SYNC_API.md`](../docs/api/SYNC_API.md), [`docs/api/REMOTE_COMMAND_API.md`](../docs/api/REMOTE_COMMAND_API.md). Произвольных shell/RCON-команд нет.
+
+## Теги участников Telegram
+
+Теги включаются явно и применяются ровно к одному настроенному чату:
+
+```yaml
+memberTags:
+  enabled: true
+  chatId: <TELEGRAM_GROUP_CHAT_ID>
+  excludeChatAdministrators: true
+```
+
+Требуются Telegram Bot API 9.5+, права администратора у бота и `can_manage_tags`. Отсутствующий или неверный `chatId` безопасно отключает функцию. По умолчанию выбран вариант «Без тега»; пользователь может выбрать только принадлежащий ему включённый аккаунт, в БД хранится ID аккаунта, а при синхронизации берётся актуальный авторитетный ник. В версии 0.6.4 администраторы/владельцы Telegram-чата исключаются всегда. Для пользователей вне чата и при временных ошибках API настройка сохраняется; повторная попытка выполняется по обновлению членства в целевом чате или permission-защищённым действием **Синхронизировать теги чата**.
+
+Схема 7 добавляет nullable-настройку с `ON DELETE SET NULL` и сохранённое состояние ввода причины отклонения регистрации. Причина вводится модератором в личном чате, ограничена 1 000 символами, видна пользователю и фиксируется в одной транзакции с первым успешным завершающим решением.
 
 ## SQLite, сборка и запуск
 

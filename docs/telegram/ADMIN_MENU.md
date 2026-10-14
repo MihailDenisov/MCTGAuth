@@ -9,11 +9,8 @@ English private menu:
 ```text
 🛡 Administration
 
-🆕 New tickets                 🟡 In progress
-👤 My tickets
-📝 Registrations               🛠 Problems
-⚠️ Violations                  🔎 Search
-📊 Statistics                  ➕ Register Minecraft account
+📨 Requests                    📊 Player Statistics
+➕ Register Minecraft account
 ⚙️ Server management
 ```
 
@@ -22,25 +19,45 @@ Russian private menu:
 ```text
 🛡 Администрирование
 
-🆕 Новые обращения             🟡 В работе
-👤 Мои обращения
-📝 Регистрации                  🛠 Проблемы
-⚠️ Нарушения                   🔎 Поиск
-📊 Статистика                   ➕ Зарегистрировать игровой аккаунт
+📨 Обращения                   📊 Статистика игроков
+➕ Зарегистрировать игровой аккаунт
 ⚙️ Управление сервером
 ```
+
+## Requests submenu
+
+All ticket/request views are grouped under **📨 Requests** / **📨 Обращения**:
+
+```text
+EN: 🆕 New tickets | 👤 My tickets | 🟡 In progress | 📝 Registrations
+    ⚠️ Violations | 🛠 Problems | 📊 Statistics | 🔎 Search | ⬅️ Back
+RU: 🆕 Новые обращения | 👤 Мои обращения | 🟡 В работе | 📝 Регистрации
+    ⚠️ Нарушения | 🛠 Проблемы | 📊 Статистика | 🔎 Поиск | ⬅️ Назад
+```
+
+Assignment, replies, decisions, paging, search, and ticket statistics remain available there. **📊 Player Statistics** is a separate permission-controlled, paginated view (ten accounts per page, ordered by recent activity).
 
 The shared administration group uses `ADMIN_LOCALE`, independently of the ticket creator and acting moderator. For example, `ADMIN_LOCALE=ru` renders Russian cards even when the creator uses English. Moderator prompts sent to private chat use that moderator's persisted locale.
 
 Ticket actions use stable callbacks such as `ticket:1042:take`, `ticket:1042:reply`, and `ticket:1042:approve`. Telegram cards remain projections; SQLite is authoritative. Search accepts ticket number, Minecraft nickname, Telegram numeric ID, or username snapshot.
 
+Resolve and Close do not transition immediately. The bot asks whether to add a public closing comment and offers Add Comment, Close Without Comment, and Cancel. Comment entry is private, supports `/cancel`, and is limited to 4,000 characters. A concurrent completed action produces an already-closed response without adding another history or audit transition.
+
 Search also returns matching Minecraft accounts. A private account card shows the owner identity, enabled state, credential version, and registration time. `admin-account:<id>:disable` starts an optional-reason step and requires a separate confirmation callback before the backend atomically changes `enabled`, emits `ACCOUNT_DISABLED`, and writes the audit entry. `admin-account:<id>:enable` restores access and emits `ACCOUNT_ENABLED`. Repeating the current state is idempotent and creates no redundant transition.
 
 Audit details include the moderator numeric Telegram ID, target account/nickname, explicit previous/new enabled values, optional internal reason, and UTC timestamp. One owner may have multiple accounts; every callback includes the selected account ID and changes only that record.
 
+## Telegram bot blocking
+
+Account administration exposes **🚫 Block User in Bot** / **✅ Unblock User in Bot** with confirmation. The target is identified by numeric Telegram ID; actual transitions are audited with moderator ID, previous/new state, optional reason, and timestamp. Repeating an already-applied state is idempotent.
+
+When `users.bot_blocked=1`, the user cannot register, create tickets or reports, add accounts, or start password workflows. `/start` and `/menu` return the localized restricted-access response rather than granting workflow access. This state is independent from a Minecraft account's `enabled` flag.
+
 The shared group uses `ADMIN_LOCALE`; private prompts use the moderator's stored locale. Reply composition, search input, and manual registration occur privately. A group Reply callback persists a moderator-specific action with a 30-minute expiry, and the same assigned moderator completes it by sending private text.
 
 Server management menus:
+
+When Telegram member tags are enabled, Server management includes **Synchronize Chat Tags**. It requires `telegram.member_tags.sync`, reconciles only the explicit configured target chat, and reports processed, updated, cleared, skipped-administrator, non-member, and failed counts without exposing API credentials. Telegram administrators/owners are skipped regardless of MCTGAuth moderator status.
 
 ```text
 EN: 🔄 Force authentication sync | 📊 Authentication status | 🔁 Resync player

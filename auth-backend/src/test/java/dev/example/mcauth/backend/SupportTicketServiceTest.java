@@ -9,7 +9,9 @@ import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SupportTicketServiceTest {
     @TempDir Path temporaryDirectory;
@@ -105,6 +107,90 @@ class SupportTicketServiceTest {
                 }
             });
             assertEquals(1, storedAsNull);
+        }
+    }
+
+    @Test
+    void closureCommentIsPublicHistoryAndAuditWithoutDuplicatingText() throws Exception {
+        try (BackendTestContext context = new BackendTestContext(temporaryDirectory.resolve("closure.db"))) {
+            long accountId = context.register(2010L, "ClosureOwner");
+            long ticketId = context.tickets.createProblem(
+                    2010L, "owner", accountId, "Need help", List.of());
+            ModeratorIdentity moderator = new ModeratorIdentity(BackendTestContext.MODERATOR_ID, "mod");
+            context.tickets.claim(ticketId, moderator);
+
+            context.tickets.closeWithOptionalComment(
+                    ticketId, moderator, TicketStatus.RESOLVED, "Fixed after restart.");
+
+            TicketDetail detail = context.tickets.ticketForUser(2010L, ticketId);
+            assertEquals(TicketStatus.RESOLVED, detail.ticket().status());
+            assertEquals(1, detail.messages().size());
+            TicketMessageView comment = detail.messages().getFirst();
+            assertEquals("CLOSURE_COMMENT", comment.messageType());
+            assertEquals("PUBLIC", comment.visibility());
+            assertEquals(BackendTestContext.MODERATOR_ID, comment.senderTelegramId());
+            assertEquals("Fixed after restart.", comment.text());
+
+            String audit = context.database.transaction(connection -> {
+                try (var statement = connection.prepareStatement("""
+                        SELECT actor_telegram_id, details_json FROM audit_log
+                        WHERE ticket_id = ? AND event_type = 'TICKET_RESOLVED'
+                        ORDER BY id DESC LIMIT 1
+                        """)) {
+                    statement.setLong(1, ticketId);
+                    try (var result = statement.executeQuery()) {
+                        result.next();
+                        assertEquals(BackendTestContext.MODERATOR_ID, result.getLong(1));
+                        return result.getString(2);
+                    }
+                }
+            });
+            assertTrue(audit.contains("\"closingCommentPresent\":true"));
+            assertFalse(audit.contains("Fixed after restart."));
+        }
+    }
+
+    @Test
+    void closureWithoutCommentAndFinalCloseRemainIdempotent() throws Exception {
+        try (BackendTestContext context = new BackendTestContext(temporaryDirectory.resolve("closure-no-comment.db"))) {
+            long secondModeratorId = 1002L;
+            context.moderators.synchronizeConfiguredModerators(
+                    Set.of(BackendTestContext.MODERATOR_ID, secondModeratorId));
+            long accountId = context.register(2011L, "NoCommentOwner");
+            long ticketId = context.tickets.createProblem(
+                    2011L, "owner", accountId, "Need help", List.of());
+            ModeratorIdentity first = new ModeratorIdentity(BackendTestContext.MODERATOR_ID, "first");
+            context.tickets.claim(ticketId, first);
+            context.tickets.closeWithOptionalComment(ticketId, first, TicketStatus.RESOLVED, null);
+            assertTrue(context.tickets.ticketForUser(2011L, ticketId).messages().isEmpty());
+
+            WorkflowException stale = assertThrows(WorkflowException.class,
+                    () -> context.tickets.closeWithOptionalComment(ticketId,
+                            new ModeratorIdentity(secondModeratorId, "second"),
+                            TicketStatus.RESOLVED, "Must not overwrite"));
+            assertEquals(WorkflowException.Code.INVALID_STATE, stale.code());
+            assertTrue(context.tickets.ticketForUser(2011L, ticketId).messages().isEmpty());
+
+            context.tickets.closeWithOptionalComment(
+                    ticketId, first, TicketStatus.CLOSED, "Archived.");
+            TicketDetail closed = context.tickets.ticketForUser(2011L, ticketId);
+            assertEquals(TicketStatus.CLOSED, closed.ticket().status());
+            assertEquals("Archived.", closed.messages().getFirst().text());
+        }
+    }
+
+    @Test
+    void unauthorizedClosureIsRejected() throws Exception {
+        try (BackendTestContext context = new BackendTestContext(temporaryDirectory.resolve("closure-auth.db"))) {
+            long accountId = context.register(2012L, "AuthOwner");
+            long ticketId = context.tickets.createProblem(
+                    2012L, "owner", accountId, "Need help", List.of());
+            WorkflowException failure = assertThrows(WorkflowException.class,
+                    () -> context.tickets.closeWithOptionalComment(ticketId,
+                            new ModeratorIdentity(9999L, "not_a_moderator"),
+                            TicketStatus.RESOLVED, "No"));
+            assertEquals(WorkflowException.Code.UNAUTHORIZED, failure.code());
+            assertEquals(TicketStatus.OPEN, context.tickets.ticketForUser(2012L, ticketId).ticket().status());
         }
     }
 }

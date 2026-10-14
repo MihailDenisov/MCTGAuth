@@ -30,6 +30,7 @@ import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
 import net.neoforged.neoforge.event.entity.player.ItemEntityPickupEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
+import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
@@ -65,6 +66,7 @@ public final class AuthServerMod {
     private volatile BackendStatus backendStatus = new BackendStatus();
     private volatile SyncWorker syncWorker;
     private volatile RemoteCommandPoller remoteCommandPoller;
+    private volatile ServerTelemetryService telemetryService;
     private volatile ServerAuthConfig.Values config;
 
     public AuthServerMod(IEventBus modBus, ModContainer container) {
@@ -74,6 +76,7 @@ public final class AuthServerMod {
         modBus.addListener(this::registerPayloads);
         IEventBus gameBus = NeoForge.EVENT_BUS;
         gameBus.addListener(this::serverStarting);
+        gameBus.addListener(this::serverStarted);
         gameBus.addListener(this::serverStopping);
         gameBus.addListener(this::playerLogin);
         gameBus.addListener(this::playerLogout);
@@ -100,6 +103,13 @@ public final class AuthServerMod {
     ServerAuthConfig.Values config() { return config; }
     Optional<SyncWorker> syncWorker() { return Optional.ofNullable(syncWorker); }
     boolean claimTerminalDisconnect(UUID playerId) { return terminalDisconnects.add(playerId); }
+    void playerAuthenticated(ServerPlayer player) {
+        ServerTelemetryService telemetry = telemetryService;
+        AuthAccountStore accountStore = store;
+        if (telemetry == null || accountStore == null) return;
+        accountStore.findByMinecraftName(player.getGameProfile().getName())
+                .ifPresent(account -> telemetry.authenticated(player.getUUID(), account));
+    }
 
     private void registerPayloads(RegisterPayloadHandlersEvent event) {
         var registrar = event.registrar(AuthProtocol.NETWORK_VERSION);
@@ -145,9 +155,16 @@ public final class AuthServerMod {
                             Clock.systemUTC(), java.util.List.of(
                             new ForceAuthSyncHandler(() -> syncWorker),
                             new AuthStatusHandler(store, sessions, backendStatus),
-                            new ResyncPlayerHandler()));
+                            new ResyncPlayerHandler(store, () -> syncWorker,
+                                    uuid -> sessions == null ? Optional.empty()
+                                            : sessions.connectedMinecraftName(uuid))));
                     remoteCommandPoller = new RemoteCommandPoller(client, dispatcher, config.pollInterval());
                     remoteCommandPoller.start();
+                    if (config.telemetryEnabled()) {
+                        telemetryService = new ServerTelemetryService(config, client,
+                                FMLPaths.GAMEDIR.get().resolve("mctgauth").resolve("telemetry-events.json"),
+                                Clock.systemUTC(), minecraftServer.getMaxPlayers());
+                    }
                 } finally {
                     java.util.Arrays.fill(secret, '\0');
                 }
@@ -164,12 +181,21 @@ public final class AuthServerMod {
         }
     }
 
+    private void serverStarted(ServerStartedEvent event) {
+        if (event.getServer() != minecraftServer) return;
+        ServerTelemetryService telemetry = telemetryService;
+        if (telemetry != null) telemetry.start();
+    }
+
     private void serverStopping(ServerStoppingEvent event) {
         stopServices();
         minecraftServer = null;
     }
 
     private void stopServices() {
+        ServerTelemetryService telemetry = telemetryService;
+        telemetryService = null;
+        if (telemetry != null) telemetry.close();
         RemoteCommandPoller commands = remoteCommandPoller;
         remoteCommandPoller = null;
         if (commands != null) commands.close();
@@ -204,6 +230,8 @@ public final class AuthServerMod {
 
     private void playerLogout(PlayerEvent.PlayerLoggedOutEvent event) {
         if (!(event.getEntity() instanceof ServerPlayer player)) return;
+        ServerTelemetryService telemetry = telemetryService;
+        if (telemetry != null) telemetry.disconnected(player.getUUID());
         if (sessions != null) sessions.disconnected(player.getUUID());
         anchors.remove(player.getUUID());
         terminalDisconnects.remove(player.getUUID());

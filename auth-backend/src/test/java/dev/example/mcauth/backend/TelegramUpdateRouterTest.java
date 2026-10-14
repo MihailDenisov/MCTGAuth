@@ -149,7 +149,7 @@ class TelegramUpdateRouterTest {
             router.handle(message(json, BackendTestContext.MODERATOR_ID, "moderator", "en", "/admin"));
 
             assertTrue(telegram.last().text().contains("Администрирование"));
-            assertTrue(telegram.last().markup().toString().contains("Новые обращения"));
+            assertTrue(telegram.last().markup().toString().contains("Обращения"));
             assertTrue(telegram.last().markup().toString().contains("Управление сервером"));
         }
     }
@@ -175,7 +175,7 @@ class TelegramUpdateRouterTest {
 
             router.handle(message(json, BackendTestContext.MODERATOR_ID,
                     "moderator", "en", "/adm"));
-            assertTrue(telegram.last().markup().toString().contains("New tickets"));
+            assertTrue(telegram.last().markup().toString().contains("Requests"));
 
             router.handle(message(json, BackendTestContext.MODERATOR_ID,
                     "moderator", "en", localization.text(
@@ -199,6 +199,62 @@ class TelegramUpdateRouterTest {
 
             router.handle(message(json, 6001L, "ordinary", "en", "/adm"));
             assertTrue(telegram.last().text().contains("not authorized"));
+        }
+    }
+
+    @Test
+    void serverInformationBackAlwaysReturnsToUserMenuIncludingForModerator() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        try (BackendTestContext context = new BackendTestContext(
+                temporaryDirectory.resolve("server-information-back.db"))) {
+            FakeTelegramClient telegram = new FakeTelegramClient();
+            LocalizationService localization = new LocalizationService(ZoneOffset.UTC);
+            LocaleResolver locales = new LocaleResolver(
+                    context.database, BotLocale.ENGLISH, BotLocale.ENGLISH);
+            TelegramUpdateRouter router = router(telegram, json, context, localization, locales);
+
+            long ordinaryUser = 6002L;
+            context.register(ordinaryUser, "OrdinaryPlayer");
+            router.handle(message(json, ordinaryUser, "ordinary", "en",
+                    localization.text(BotLocale.ENGLISH, MessageKey.MENU_SERVER_INFORMATION)));
+            assertTrue(telegram.last().markup().toString().contains("server_info:back"));
+            router.handle(callback(json, ordinaryUser, "ordinary", "server_info:back"));
+            assertTrue(telegram.last().markup().toString().contains("My account"));
+            assertFalse(telegram.last().markup().toString().contains("Requests"));
+
+            context.register(BackendTestContext.MODERATOR_ID, "ModeratorPlayer");
+            router.handle(message(json, BackendTestContext.MODERATOR_ID, "moderator", "en",
+                    localization.text(BotLocale.ENGLISH, MessageKey.MENU_SERVER_INFORMATION)));
+            router.handle(callback(json, BackendTestContext.MODERATOR_ID, "moderator", "server_info:back"));
+            assertTrue(telegram.last().markup().toString().contains("My account"));
+            assertTrue(telegram.last().markup().toString().contains("Administration"));
+            assertFalse(telegram.last().markup().toString().contains("Requests"));
+
+            router.handle(message(json, BackendTestContext.MODERATOR_ID, "moderator", "en", "/adm"));
+            assertTrue(telegram.last().markup().toString().contains("Requests"));
+            assertFalse(telegram.last().markup().toString().contains("My account"));
+        }
+    }
+
+    @Test
+    void legacyServerInformationBackLabelAlsoReturnsModeratorToUserMenu() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        try (BackendTestContext context = new BackendTestContext(
+                temporaryDirectory.resolve("server-information-legacy-back.db"))) {
+            FakeTelegramClient telegram = new FakeTelegramClient();
+            LocalizationService localization = new LocalizationService(ZoneOffset.UTC);
+            LocaleResolver locales = new LocaleResolver(
+                    context.database, BotLocale.ENGLISH, BotLocale.ENGLISH);
+            TelegramUpdateRouter router = router(telegram, json, context, localization, locales);
+            context.register(BackendTestContext.MODERATOR_ID, "ModeratorPlayer");
+
+            router.handle(message(json, BackendTestContext.MODERATOR_ID, "moderator", "en",
+                    localization.text(BotLocale.ENGLISH, MessageKey.MENU_SERVER_INFORMATION)));
+            router.handle(message(json, BackendTestContext.MODERATOR_ID, "moderator", "en",
+                    localization.text(BotLocale.ENGLISH, MessageKey.BUTTON_BACK)));
+
+            assertTrue(telegram.last().markup().toString().contains("My account"));
+            assertFalse(telegram.last().markup().toString().contains("Requests"));
         }
     }
 
@@ -301,7 +357,7 @@ class TelegramUpdateRouterTest {
 
             assertTrue(context.pendingModeratorActions.find(BackendTestContext.MODERATOR_ID).isEmpty());
             assertTrue(telegram.last().text().contains("cancelled"));
-            assertTrue(telegram.last().markup().toString().contains("New tickets"));
+            assertTrue(telegram.last().markup().toString().contains("Requests"));
 
             context.pendingModeratorActions.beginReply(moderator, ticketId);
             router.handle(message(json, BackendTestContext.MODERATOR_ID,
@@ -309,6 +365,93 @@ class TelegramUpdateRouterTest {
             assertTrue(context.pendingModeratorActions.find(BackendTestContext.MODERATOR_ID).isEmpty());
             assertTrue(telegram.last().text().contains("Welcome"));
             assertFalse(telegram.last().markup().toString().contains("New tickets"));
+
+            context.pendingModeratorActions.beginClosureComment(
+                    moderator, ticketId, dev.example.mcauth.api.TicketStatus.RESOLVED);
+            router.handle(message(json, BackendTestContext.MODERATOR_ID,
+                    "moderator", "en", "/cancel"));
+            assertTrue(context.pendingModeratorActions.find(BackendTestContext.MODERATOR_ID).isEmpty());
+            assertEquals(dev.example.mcauth.api.TicketStatus.IN_PROGRESS,
+                    context.tickets.ticketForUser(6201L, ticketId).ticket().status());
+        }
+    }
+
+    @Test
+    void moderatorCanResolveWithPublicClosingComment() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        try (BackendTestContext context = new BackendTestContext(
+                temporaryDirectory.resolve("closure-router.db"))) {
+            FakeTelegramClient telegram = new FakeTelegramClient();
+            LocalizationService localization = new LocalizationService(ZoneOffset.UTC);
+            LocaleResolver locales = new LocaleResolver(
+                    context.database, BotLocale.ENGLISH, BotLocale.ENGLISH);
+            TelegramUpdateRouter router = router(telegram, json, context, localization, locales);
+            long ownerId = 6210L;
+            long accountId = context.register(ownerId, "ClosurePlayer");
+            long ticketId = context.tickets.createProblem(
+                    ownerId, "owner", accountId, "Problem", List.of());
+            ModeratorIdentity moderator = new ModeratorIdentity(
+                    BackendTestContext.MODERATOR_ID, "moderator");
+            context.tickets.claim(ticketId, moderator);
+
+            router.handle(groupCallback(json, BackendTestContext.MODERATOR_ID,
+                    "moderator", "ticket:" + ticketId + ":resolve"));
+            SentMessage choice = telegram.lastForChat(ADMIN_CHAT_ID);
+            assertTrue(choice.text().contains("Add a closing comment"));
+            assertTrue(choice.markup().toString().contains("resolve_comment"));
+            assertEquals(dev.example.mcauth.api.TicketStatus.IN_PROGRESS,
+                    context.tickets.ticketForUser(ownerId, ticketId).ticket().status());
+
+            router.handle(groupCallback(json, BackendTestContext.MODERATOR_ID,
+                    "moderator", "ticket:" + ticketId + ":resolve_comment"));
+            assertTrue(context.pendingModeratorActions.find(BackendTestContext.MODERATOR_ID).isPresent());
+            router.handle(message(json, BackendTestContext.MODERATOR_ID,
+                    "moderator", "en", "   "));
+            assertTrue(telegram.lastForChat(BackendTestContext.MODERATOR_ID).text()
+                    .contains("comment is required"));
+            assertTrue(context.pendingModeratorActions.find(BackendTestContext.MODERATOR_ID).isPresent());
+            router.handle(message(json, BackendTestContext.MODERATOR_ID,
+                    "moderator", "en", "Resolved after reviewing the logs."));
+
+            TicketDetail resolved = context.tickets.ticketForUser(ownerId, ticketId);
+            assertEquals(dev.example.mcauth.api.TicketStatus.RESOLVED, resolved.ticket().status());
+            assertEquals("CLOSURE_COMMENT", resolved.messages().getFirst().messageType());
+            assertEquals("PUBLIC", resolved.messages().getFirst().visibility());
+            assertTrue(telegram.lastForChat(ownerId).text().contains("Administrator comment"));
+            assertTrue(telegram.lastForChat(ownerId).text().contains("Resolved after reviewing the logs."));
+            assertTrue(context.pendingModeratorActions.find(BackendTestContext.MODERATOR_ID).isEmpty());
+        }
+    }
+
+    @Test
+    void moderatorCanResolveWithoutClosingComment() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        try (BackendTestContext context = new BackendTestContext(
+                temporaryDirectory.resolve("closure-router-no-comment.db"))) {
+            FakeTelegramClient telegram = new FakeTelegramClient();
+            LocalizationService localization = new LocalizationService(ZoneOffset.UTC);
+            LocaleResolver locales = new LocaleResolver(
+                    context.database, BotLocale.ENGLISH, BotLocale.ENGLISH);
+            TelegramUpdateRouter router = router(telegram, json, context, localization, locales);
+            long ownerId = 6211L;
+            long accountId = context.register(ownerId, "NoCommentPlayer");
+            long ticketId = context.tickets.createProblem(
+                    ownerId, "owner", accountId, "Problem", List.of());
+            context.tickets.claim(ticketId, new ModeratorIdentity(
+                    BackendTestContext.MODERATOR_ID, "moderator"));
+
+            router.handle(groupCallback(json, BackendTestContext.MODERATOR_ID,
+                    "moderator", "ticket:" + ticketId + ":resolve_now"));
+
+            TicketDetail resolved = context.tickets.ticketForUser(ownerId, ticketId);
+            assertEquals(dev.example.mcauth.api.TicketStatus.RESOLVED, resolved.ticket().status());
+            assertTrue(resolved.messages().isEmpty());
+            assertFalse(telegram.lastForChat(ownerId).text().contains("Administrator comment"));
+
+            router.handle(groupCallback(json, BackendTestContext.MODERATOR_ID,
+                    "moderator", "ticket:" + ticketId + ":resolve_now"));
+            assertTrue(telegram.lastForChat(ADMIN_CHAT_ID).text().contains("already been closed"));
+            assertTrue(context.tickets.ticketForUser(ownerId, ticketId).messages().isEmpty());
         }
     }
 
@@ -522,6 +665,128 @@ class TelegramUpdateRouterTest {
         }
     }
 
+    @Test
+    void blockedUserReceivesOnlyRestrictedResponseForCommandsAndWorkflowButtons() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        try (BackendTestContext context = new BackendTestContext(temporaryDirectory.resolve("blocked-router.db"))) {
+            long user = 6601L;
+            context.register(user, "BlockedPlayer");
+            context.userModeration.setBlocked(
+                    new ModeratorIdentity(BackendTestContext.MODERATOR_ID, "moderator"), user, true, "spam");
+            FakeTelegramClient telegram = new FakeTelegramClient();
+            LocalizationService localization = new LocalizationService(ZoneOffset.UTC);
+            LocaleResolver locales = new LocaleResolver(context.database, BotLocale.ENGLISH, BotLocale.ENGLISH);
+            TelegramUpdateRouter router = router(telegram, json, context, localization, locales);
+
+            router.handle(message(json, user, "blocked", "en", "/menu"));
+            assertEquals(localization.text(BotLocale.ENGLISH, MessageKey.BOT_ACCESS_RESTRICTED),
+                    telegram.last().text());
+            router.handle(message(json, user, "blocked", "en",
+                    localization.text(BotLocale.ENGLISH, MessageKey.MENU_REPORT_PROBLEM)));
+            assertEquals(localization.text(BotLocale.ENGLISH, MessageKey.BOT_ACCESS_RESTRICTED),
+                    telegram.last().text());
+        }
+    }
+
+    @Test
+    void chatTagSelectionUsesOwnedEnabledAccountAndSurvivesTelegramFailure() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        try (BackendTestContext context = new BackendTestContext(temporaryDirectory.resolve("chat-tags.db"))) {
+            long userId = 6701L;
+            long accountId = context.register(userId, "TagPlayer");
+            context.register(6702L, "OtherPlayer");
+            FakeTelegramClient telegram = new FakeTelegramClient();
+            TelegramFeatureConfig features = new TelegramFeatureConfig(null, null, false, null, null,
+                    null, null, true, 60, true, true, true,
+                    true, -1001234567890L, true);
+            LocalizationService localization = new LocalizationService(ZoneOffset.UTC);
+            LocaleResolver locales = new LocaleResolver(context.database, BotLocale.ENGLISH, BotLocale.ENGLISH);
+            TelegramUpdateRouter router = router(telegram, json, context, localization, locales, features);
+
+            router.handle(message(json, userId, "tag_user", "en",
+                    localization.text(BotLocale.ENGLISH, MessageKey.MENU_SETTINGS)));
+            assertTrue(telegram.last().markup().toString().contains("Chat Tag"));
+            router.handle(callback(json, userId, "tag_user", "chat_tag:open"));
+            assertTrue(telegram.last().markup().toString().contains("TagPlayer"));
+            assertFalse(telegram.last().markup().toString().contains("OtherPlayer"));
+
+            telegram.tagFailure = true;
+            router.handle(callback(json, userId, "tag_user", "chat_tag:account:" + accountId));
+            assertEquals(accountId, context.accounts.chatTagPreference(userId).accountId());
+
+            telegram.tagFailure = false;
+            router.handle(callback(json, userId, "tag_user", "chat_tag:none"));
+            assertFalse(context.accounts.chatTagPreference(userId).hasTag());
+            assertEquals("", telegram.tag);
+        }
+    }
+
+    @Test
+    void chatTagSkipsTelegramAdministratorsButAllowsMctgAuthModerator() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        try (BackendTestContext context = new BackendTestContext(temporaryDirectory.resolve("chat-tag-admin.db"))) {
+            long accountId = context.register(BackendTestContext.MODERATOR_ID, "ModeratorTag");
+            FakeTelegramClient telegram = new FakeTelegramClient();
+            TelegramFeatureConfig features = new TelegramFeatureConfig(null, null, false, null, null,
+                    null, null, true, 60, true, true, true,
+                    true, -1001234567890L, true);
+            LocalizationService localization = new LocalizationService(ZoneOffset.UTC);
+            LocaleResolver locales = new LocaleResolver(context.database, BotLocale.ENGLISH, BotLocale.ENGLISH);
+            TelegramUpdateRouter router = router(telegram, json, context, localization, locales, features);
+
+            telegram.chatMemberRole = TelegramChatMember.Role.ADMINISTRATOR;
+            router.handle(callback(json, BackendTestContext.MODERATOR_ID, "moderator",
+                    "chat_tag:account:" + accountId));
+            assertEquals(accountId,
+                    context.accounts.chatTagPreference(BackendTestContext.MODERATOR_ID).accountId());
+            assertEquals(0, telegram.tagUpdates);
+
+            telegram.chatMemberRole = TelegramChatMember.Role.MEMBER;
+            router.handle(callback(json, BackendTestContext.MODERATOR_ID, "moderator",
+                    "chat_tag:account:" + accountId));
+            assertEquals("ModeratorTag", telegram.tag);
+            assertEquals(1, telegram.tagUpdates);
+        }
+    }
+
+    @Test
+    void registrationCanBeRejectedWithPersistedLocalizedReason() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        try (BackendTestContext context = new BackendTestContext(temporaryDirectory.resolve("reject-reason.db"))) {
+            long userId = 6801L;
+            long ticketId = context.registrations.submitRegistration(new RegistrationSubmission(
+                    userId, "applicant", "RejectedPlayer", true, 25, "Experience"));
+            ModeratorIdentity moderator = new ModeratorIdentity(BackendTestContext.MODERATOR_ID, "moderator");
+            context.tickets.claim(ticketId, moderator);
+            FakeTelegramClient telegram = new FakeTelegramClient();
+            LocalizationService localization = new LocalizationService(ZoneOffset.UTC);
+            LocaleResolver locales = new LocaleResolver(context.database, BotLocale.ENGLISH, BotLocale.ENGLISH);
+            TelegramUpdateRouter router = router(telegram, json, context, localization, locales);
+
+            router.handle(groupCallback(json, BackendTestContext.MODERATOR_ID, "moderator",
+                    "ticket:" + ticketId + ":reject"));
+            assertTrue(telegram.lastForChat(ADMIN_CHAT_ID).markup().toString().contains("reject_reason"));
+            router.handle(groupCallback(json, BackendTestContext.MODERATOR_ID, "moderator",
+                    "ticket:" + ticketId + ":reject_reason"));
+            router.handle(message(json, BackendTestContext.MODERATOR_ID, "moderator", "en",
+                    "Minecraft profile does not match the request."));
+
+            String comment = context.database.transaction(connection -> {
+                try (var statement = connection.prepareStatement(
+                        "SELECT comment FROM ticket_decisions WHERE ticket_id = ?")) {
+                    statement.setLong(1, ticketId);
+                    try (var result = statement.executeQuery()) {
+                        result.next();
+                        return result.getString(1);
+                    }
+                }
+            });
+            assertEquals("Minecraft profile does not match the request.", comment);
+            assertTrue(telegram.lastForChat(userId).text().contains("Reason:"));
+            assertTrue(telegram.lastForChat(userId).text().contains(comment));
+        }
+    }
+
     private static TelegramUpdateRouter router(
             TelegramClient telegram, ObjectMapper json, BackendTestContext context,
             LocalizationService localization, LocaleResolver locales) {
@@ -534,7 +799,8 @@ class TelegramUpdateRouterTest {
         return new TelegramUpdateRouter(telegram, "ExampleBot", ADMIN_CHAT_ID,
                 "https://t.me/example/1", features, "survival-main", context.registrations,
                 context.tickets, context.accounts, context.moderators, context.commands,
-                context.pendingModeratorActions, localization, locales, json);
+                context.pendingModeratorActions, context.telemetry, context.userModeration,
+                localization, locales, json);
     }
 
     private static JsonNode message(
@@ -581,12 +847,27 @@ class TelegramUpdateRouterTest {
         private final List<SentMessage> sent = new ArrayList<>();
         private TelegramMembership membership = TelegramMembership.SUBSCRIBED;
         private boolean membershipFailure;
+        private TelegramChatMember.Role chatMemberRole = TelegramChatMember.Role.MEMBER;
+        private boolean tagFailure;
+        private String tag = "";
+        private int tagUpdates;
 
         @Override public List<JsonNode> getUpdates(long offset) { return List.of(); }
 
         @Override public TelegramMembership getChatMembership(String channel, long telegramUserId) throws IOException {
             if (membershipFailure) throw new IOException("simulated Telegram outage");
             return membership;
+        }
+
+        @Override public TelegramChatMember getChatMember(long chatId, long telegramUserId) throws IOException {
+            if (tagFailure) throw new IOException("simulated tag outage");
+            return new TelegramChatMember(chatMemberRole, tag);
+        }
+
+        @Override public void setChatMemberTag(long chatId, long telegramUserId, String value) throws IOException {
+            if (tagFailure) throw new IOException("simulated tag outage");
+            tag = value;
+            tagUpdates++;
         }
 
         @Override public long sendMessage(long chatId, String text, JsonNode replyMarkup) {

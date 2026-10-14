@@ -99,6 +99,13 @@ public final class ModeratorService {
         }
     }
 
+    public void requirePermission(ModeratorIdentity moderator, ModeratorPermission permission) {
+        database.transaction(connection -> {
+            requirePermission(connection, moderator, permission);
+            return null;
+        });
+    }
+
     public boolean isEnabled(long telegramId) {
         if (telegramId <= 0) {
             return false;

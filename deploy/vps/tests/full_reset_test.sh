@@ -17,6 +17,9 @@ sqlite3 "${database}" <"${ROOT_DIR}/auth-backend/src/main/resources/db/migration
 sqlite3 "${database}" <"${ROOT_DIR}/auth-backend/src/main/resources/db/migration/V002__backend_phase_2.sql"
 sqlite3 "${database}" <"${ROOT_DIR}/auth-backend/src/main/resources/db/migration/V003__user_locale.sql"
 sqlite3 "${database}" <"${ROOT_DIR}/auth-backend/src/main/resources/db/migration/V004__telegram_workflow_fixes.sql"
+sqlite3 "${database}" <"${ROOT_DIR}/auth-backend/src/main/resources/db/migration/V005__telemetry_and_bot_blocking.sql"
+sqlite3 "${database}" <"${ROOT_DIR}/auth-backend/src/main/resources/db/migration/V006__ticket_closure_comments.sql"
+sqlite3 "${database}" <"${ROOT_DIR}/auth-backend/src/main/resources/db/migration/V007__chat_tags_and_registration_rejection.sql"
 sqlite3 "${database}" <<'SQL'
 PRAGMA foreign_keys = ON;
 CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, filename TEXT NOT NULL, applied_at TEXT NOT NULL);
@@ -24,7 +27,10 @@ INSERT INTO schema_migrations VALUES
  (1,'V001__initial.sql','2026-09-15T00:00:00Z'),
  (2,'V002__backend_phase_2.sql','2026-09-15T00:00:00Z'),
  (3,'V003__user_locale.sql','2026-09-15T00:00:00Z'),
- (4,'V004__telegram_workflow_fixes.sql','2026-09-15T00:00:00Z');
+ (4,'V004__telegram_workflow_fixes.sql','2026-09-15T00:00:00Z'),
+ (5,'V005__telemetry_and_bot_blocking.sql','2026-09-18T00:00:00Z'),
+ (6,'V006__ticket_closure_comments.sql','2026-09-18T00:00:00Z'),
+ (7,'V007__chat_tags_and_registration_rejection.sql','2026-10-14T00:00:00Z');
 INSERT INTO moderators VALUES(1,'admin',1,'2026-09-15T00:00:00Z');
 INSERT INTO moderator_permissions VALUES(1,'ACCOUNT_DISABLE'),(1,'ACCOUNT_ENABLE');
 INSERT INTO users(telegram_id,username_snapshot,account_status,created_at,updated_at,locale)
@@ -56,12 +62,19 @@ INSERT INTO audit_log(event_type,ticket_id,account_id,actor_telegram_id,occurred
 INSERT INTO sync_events VALUES('00000000-0000-4000-8000-000000000001','ACCOUNT_CREATED',1,'{}','2026-09-15T00:00:00Z',NULL,0);
 INSERT INTO remote_commands(public_id,server_id,command_type,schema_version,payload_json,status,created_at,expires_at,created_by_telegram_id)
  VALUES('00000000-0000-4000-8000-000000000002','server','AUTH_STATUS',1,'{}','PENDING','2026-09-15T00:00:00Z','2026-09-15T01:00:00Z',1);
-INSERT INTO moderator_pending_actions VALUES(1,'REPLY_TO_TICKET',2,'2026-09-15T00:00:00Z','2026-09-15T01:00:00Z');
+INSERT INTO moderator_pending_actions
+ (moderator_telegram_id,action_type,ticket_id,target_status,created_at,expires_at)
+ VALUES(1,'REPLY_TO_TICKET',2,NULL,'2026-09-15T00:00:00Z','2026-09-15T01:00:00Z');
+INSERT INTO server_status VALUES('server','instance','2026-09-15T00:00:00Z','2026-09-15T00:00:00Z',1,20,NULL);
+INSERT INTO player_sessions(join_event_id,server_id,server_instance_id,minecraft_account_id,nickname_snapshot,joined_at)
+ VALUES('join','server','instance',1,'PlayerA','2026-09-15T00:00:00Z');
+INSERT INTO telemetry_events VALUES('join','server','instance','PLAYER_JOINED','2026-09-15T00:00:00Z','2026-09-15T00:00:00Z');
 SQL
 
 printf '%s\n' '{"schemaVersion":1,"accounts":{"playera":{"credentialVerifier":"old-verifier-must-disappear"}},"processedEvents":[{"id":"old"}],"processedRemoteCommands":[]}' >"${cache}"
 cp -- "${cache}" "${cache}.bak"
 cp -- "${cache}" "${cache}.tmp"
+printf '%s\n' '{"schemaVersion":1,"events":[{"eventId":"queued"}]}' >"$(dirname -- "${cache}")/telemetry-events.json"
 
 before="$(sqlite3 "${database}" 'SELECT COUNT(*) FROM users;')"
 dry_output="$(print_counts "${database}" "${cache}")"
@@ -74,13 +87,14 @@ clear_minecraft_cache "${cache}" "$(id -un)" "$(id -gn)"
 for table in "${RESET_TABLES[@]}"; do
     [[ "$(sqlite3 "${database}" "SELECT COUNT(*) FROM ${table};")" == "0" ]]
 done
-[[ "$(sqlite3 "${database}" 'SELECT COUNT(*) FROM schema_migrations;')" == "4" ]]
+[[ "$(sqlite3 "${database}" 'SELECT COUNT(*) FROM schema_migrations;')" == "7" ]]
 [[ "$(sqlite3 "${database}" 'SELECT COUNT(*) FROM moderators;')" == "1" ]]
 [[ "$(sqlite3 "${database}" 'SELECT COUNT(*) FROM moderator_permissions;')" == "2" ]]
 [[ "$(jq -r '.accounts | length' "${cache}")" == "0" ]]
 ! grep -q 'old-verifier-must-disappear' "${cache}"
 ! grep -a -q 'old-verifier-must-disappear' "${database}"
 [[ ! -e "${cache}.bak" && ! -e "${cache}.tmp" ]]
+[[ ! -e "$(dirname -- "${cache}")/telemetry-events.json" ]]
 [[ -z "$(sqlite3 "${database}" 'PRAGMA foreign_key_check;')" ]]
 [[ "$(sqlite3 "${database}" 'PRAGMA integrity_check;')" == "ok" ]]
 

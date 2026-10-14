@@ -124,6 +124,70 @@ public final class AccountService {
         });
     }
 
+    public ChatTagPreference chatTagPreference(long telegramId) {
+        if (telegramId <= 0) throw invalid("Invalid Telegram identity");
+        return database.transaction(connection -> loadChatTagPreference(connection, telegramId, true));
+    }
+
+    public ChatTagPreference selectChatTag(long telegramId, Long accountId) {
+        if (telegramId <= 0) throw invalid("Invalid Telegram identity");
+        if (accountId != null && accountId <= 0) throw invalid("Minecraft account ID must be positive");
+        return database.transaction(connection -> {
+            if (accountId != null) {
+                AccountView account = requireOwnedAccount(connection, telegramId, accountId);
+                if (!account.enabled()) {
+                    throw new WorkflowException(WorkflowException.Code.INVALID_STATE,
+                            "Disabled Minecraft accounts cannot be selected as chat tags");
+                }
+            }
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    UPDATE users SET chat_tag_account_id = ?, chat_tag_managed = 1, updated_at = ?
+                    WHERE telegram_id = ?
+                    """)) {
+                if (accountId == null) statement.setNull(1, java.sql.Types.BIGINT);
+                else statement.setLong(1, accountId);
+                statement.setString(2, Instant.now(clock).toString());
+                statement.setLong(3, telegramId);
+                if (statement.executeUpdate() != 1) {
+                    throw new WorkflowException(WorkflowException.Code.NOT_FOUND, "Telegram user was not found");
+                }
+            }
+            return loadChatTagPreference(connection, telegramId, false);
+        });
+    }
+
+    public List<ChatTagPreference> chatTagPreferences() {
+        return database.transaction(connection -> {
+            List<ChatTagPreference> preferences = new ArrayList<>();
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    SELECT u.telegram_id, u.chat_tag_account_id, m.nickname, m.enabled,
+                           m.owner_telegram_id
+                    FROM users u
+                    LEFT JOIN minecraft_accounts m ON m.id = u.chat_tag_account_id
+                    WHERE u.chat_tag_account_id IS NOT NULL OR u.chat_tag_managed = 1
+                    ORDER BY u.telegram_id
+                    """)) {
+                try (ResultSet result = statement.executeQuery()) {
+                    while (result.next()) {
+                        long ownerId = result.getLong("telegram_id");
+                        long selectedId = result.getLong("chat_tag_account_id");
+                        boolean valid = result.getString("nickname") != null
+                                && result.getInt("enabled") == 1
+                                && result.getLong("owner_telegram_id") == ownerId;
+                        if (valid) {
+                            preferences.add(new ChatTagPreference(
+                                    ownerId, selectedId, result.getString("nickname")));
+                        } else {
+                            clearChatTagPreference(connection, ownerId);
+                            preferences.add(new ChatTagPreference(ownerId, null, null));
+                        }
+                    }
+                }
+            }
+            return List.copyOf(preferences);
+        });
+    }
+
     public List<AccountView> search(ModeratorIdentity moderator, String query) {
         requirePhaseTwoServices();
         String value = query == null ? "" : query.strip();
@@ -194,6 +258,16 @@ public final class AccountService {
             Instant now = Instant.now(clock);
             if (account.enabled() == enabled) {
                 return new AccountStateChangeResult(account, false, now);
+            }
+            if (!enabled) {
+                try (PreparedStatement clearTag = connection.prepareStatement("""
+                        UPDATE users SET chat_tag_account_id = NULL, updated_at = ?
+                        WHERE chat_tag_account_id = ?
+                        """)) {
+                    clearTag.setString(1, now.toString());
+                    clearTag.setLong(2, accountId);
+                    clearTag.executeUpdate();
+                }
             }
             try (PreparedStatement statement = connection.prepareStatement("""
                     UPDATE minecraft_accounts SET enabled = ?, updated_at = ?
@@ -401,6 +475,41 @@ public final class AccountService {
                 AccountCreationMethod.valueOf(result.getString("creation_method")),
                 result.getInt("credential_version"),
                 Instant.parse(result.getString("created_at")));
+    }
+
+    private static ChatTagPreference loadChatTagPreference(
+            Connection connection, long telegramId, boolean repairInvalid) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT u.chat_tag_account_id, m.nickname, m.enabled, m.owner_telegram_id
+                FROM users u
+                LEFT JOIN minecraft_accounts m ON m.id = u.chat_tag_account_id
+                WHERE u.telegram_id = ?
+                """)) {
+            statement.setLong(1, telegramId);
+            try (ResultSet result = statement.executeQuery()) {
+                if (!result.next()) {
+                    throw new WorkflowException(WorkflowException.Code.NOT_FOUND, "Telegram user was not found");
+                }
+                long selectedId = result.getLong("chat_tag_account_id");
+                if (result.wasNull()) return new ChatTagPreference(telegramId, null, null);
+                boolean valid = result.getString("nickname") != null
+                        && result.getInt("enabled") == 1
+                        && result.getLong("owner_telegram_id") == telegramId;
+                if (!valid) {
+                    if (repairInvalid) clearChatTagPreference(connection, telegramId);
+                    return new ChatTagPreference(telegramId, null, null);
+                }
+                return new ChatTagPreference(telegramId, selectedId, result.getString("nickname"));
+            }
+        }
+    }
+
+    private static void clearChatTagPreference(Connection connection, long telegramId) throws SQLException {
+        try (PreparedStatement clear = connection.prepareStatement(
+                "UPDATE users SET chat_tag_account_id = NULL WHERE telegram_id = ?")) {
+            clear.setLong(1, telegramId);
+            clear.executeUpdate();
+        }
     }
 
     private static void requireUser(Connection connection, long telegramId) throws SQLException {

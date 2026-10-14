@@ -9,8 +9,11 @@ public enum ModeratorPermission {
     ACCOUNT_CREATE_MANUAL("account.create.manual"),
     ACCOUNT_DISABLE("account.disable"),
     ACCOUNT_ENABLE("account.enable"),
+    BOT_USER_MODERATE("bot.user.moderate"),
+    PLAYER_STATISTICS("player.statistics"),
     AUTH_SYNC_FORCE("auth.sync.force"),
     AUTH_PLAYER_RESYNC("auth.player.resync"),
+    TELEGRAM_MEMBER_TAG_SYNC("telegram.member_tags.sync"),
     SERVER_STATUS("server.status");
 
     private final String key;

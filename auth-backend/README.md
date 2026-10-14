@@ -1,4 +1,4 @@
-# MCTGAuth backend 0.5.0
+# MCTGAuth backend 0.6.4
 
 [Русская версия](README_RU.md)
 
@@ -20,7 +20,7 @@ Java 21 (JDK/JRE), outbound HTTPS to `api.telegram.org`, a BotFather bot, a priv
 | `MODERATOR_TELEGRAM_IDS` | Yes | `123456789,987654321` | No; comma-separated positive numeric authorization IDs. |
 | `AUTH_DATABASE_PATH` | No | `./data/auth-backend.db` | Sensitive path; service must write its parent. |
 | `HOW_TO_PLAY_URL` | No | `https://t.me/example/1` | No; optional absolute HTTPS detailed-guide URL. |
-| `TELEGRAM_FEATURE_CONFIG_PATH` | No | `./config/telegram-features.yaml` | UTF-8 YAML for localized text, subscription gate, map, and modpack links. |
+| `TELEGRAM_FEATURE_CONFIG_PATH` | No | `./config/telegram-features.yaml` | UTF-8 YAML for localized text, links, server status, and optional member tags. |
 | `HTTP_BIND_ADDRESS` | No | `127.0.0.1` | No; must resolve loopback; public bind rejected. |
 | `HTTP_PORT` | No | `8080` | No; 1–65535. |
 | `AUTH_API_TOKEN` | Yes | `<32+ random characters>` | Secret bearer token; 32–512 non-whitespace characters. |
@@ -55,8 +55,26 @@ The embedded server is loopback-only. `/health` and `/version` need no bearer to
 | `GET /api/v1/server/commands?server_id=<id>` | `200`; ordered, non-expired typed commands. |
 | `POST /api/v1/server/commands/<command-id>/started?server_id=<id>` | `200 running` or `409 invalid_state`. |
 | `POST /api/v1/server/commands/<command-id>/result?server_id=<id>` | JSON `status` `SUCCESS`/`FAILED`, structured `result`, optional safe `errorMessage`; `200` or `409 invalid_state`. |
+| `POST /api/v1/servers/heartbeat` | Authenticated current server instance/player counts. |
+| `POST /api/v1/servers/player-events` | Idempotent account-ID join/leave event. |
+| `POST /api/v1/servers/shutdown` | Best-effort clean instance shutdown/finalization. |
 
 Errors: unauthorized is `401` plus `WWW-Authenticate: Bearer`; unsupported method `405 method_not_allowed`; malformed ID/JSON/status/query `400 invalid_request`; unknown route/ID `404 not_found`; rejected workflow `403`/`409 request_rejected`. Responses are JSON, `Cache-Control: no-store`. Only configured `SERVER_ID` is accepted; event/command IDs, expiry, acknowledgements, and state transitions are idempotently checked. See [`docs/api/SYNC_API.md`](../docs/api/SYNC_API.md) and [`docs/api/REMOTE_COMMAND_API.md`](../docs/api/REMOTE_COMMAND_API.md). There is no arbitrary shell/RCON command field.
+
+## Telegram member tags
+
+Member tags are opt-in and target exactly one explicitly configured chat:
+
+```yaml
+memberTags:
+  enabled: true
+  chatId: <TELEGRAM_GROUP_CHAT_ID>
+  excludeChatAdministrators: true
+```
+
+They require Telegram Bot API 9.5+, bot administrator membership, and `can_manage_tags`. A missing/invalid `chatId` safely disables the feature. Users start with No tag and may select only an enabled account they own; the database stores its account ID and resolves the authoritative nickname when synchronizing. Telegram administrators/owners are always excluded in 0.6.4. Non-members and temporary API failures keep the saved preference; target-chat membership updates and the permission-controlled **Synchronize Chat Tags** action provide retry/reconciliation.
+
+Schema 7 adds this nullable preference with `ON DELETE SET NULL` and persisted registration-rejection input state. Registration rejection now supports an optional public reason entered privately by the moderator, limited to 1,000 characters, and committed transactionally with the first successful terminal decision.
 
 ## SQLite, build, and run
 

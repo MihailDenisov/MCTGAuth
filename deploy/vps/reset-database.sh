@@ -10,7 +10,8 @@ RESET_DATABASE_COMMITTED=false
 RESET_TABLES=(
     moderator_pending_actions ticket_decisions ticket_messages ticket_attachments
     problem_ticket_data violation_ticket_data add_account_ticket_data password_changes
-    audit_log remote_commands registration_ticket_data tickets minecraft_accounts sync_events users
+    telemetry_events player_sessions server_status audit_log remote_commands registration_ticket_data
+    tickets minecraft_accounts sync_events users
 )
 
 validate_service_name() {
@@ -50,7 +51,7 @@ print_counts() {
 backup_minecraft_cache() {
     local cache="$1" backup="$2" cache_dir name files=()
     cache_dir="$(dirname -- "${cache}")"
-    for name in accounts.json accounts.json.bak accounts.json.tmp; do
+    for name in accounts.json accounts.json.bak accounts.json.tmp telemetry-events.json telemetry-events.json.tmp; do
         [[ ! -L "${cache_dir}/${name}" ]] || die "Minecraft cache files must not be symbolic links."
         if [[ -f "${cache_dir}/${name}" && ! -L "${cache_dir}/${name}" ]]; then
             files+=("${name}")
@@ -81,6 +82,9 @@ DELETE FROM problem_ticket_data;
 DELETE FROM violation_ticket_data;
 DELETE FROM add_account_ticket_data;
 DELETE FROM password_changes;
+DELETE FROM telemetry_events;
+DELETE FROM player_sessions;
+DELETE FROM server_status;
 DELETE FROM audit_log;
 DELETE FROM remote_commands;
 DELETE FROM registration_ticket_data;
@@ -112,7 +116,8 @@ clear_minecraft_cache() {
     printf '%s\n' '{"schemaVersion":1,"accounts":{},"processedEvents":[],"processedRemoteCommands":[]}' \
         >"${temporary}"
     mv -f -- "${temporary}" "${cache}"
-    rm -f -- "${cache}.bak" "${cache}.tmp"
+    rm -f -- "${cache}.bak" "${cache}.tmp" "${cache_dir}/telemetry-events.json" \
+        "${cache_dir}/telemetry-events.json.tmp"
     [[ "$(jq -er '.accounts | length' "${cache}")" == "0" ]] \
         || die "Minecraft cache reset verification failed."
 }

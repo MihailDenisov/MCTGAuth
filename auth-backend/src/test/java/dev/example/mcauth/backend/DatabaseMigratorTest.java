@@ -17,11 +17,15 @@ class DatabaseMigratorTest {
     void appliesMigrationsInOrderAndDoesNotReapplyThem() throws Exception {
         Path path = temporaryDirectory.resolve("migrations.db");
         try (BackendDatabase database = BackendDatabase.open(path)) {
-            assertEquals("1:initial,2:backend_phase_2,3:user_locale,4:telegram_workflow_fixes",
+            assertEquals("1:initial,2:backend_phase_2,3:user_locale,4:telegram_workflow_fixes,5:telemetry_and_bot_blocking,6:ticket_closure_comments,7:chat_tags_and_registration_rejection",
                     migrations(database));
+            assertTrue(tableContains(database, "users", "chat_tag_account_id"));
+            assertTrue(tableContains(database, "users", "chat_tag_managed"));
+            assertTrue(tableSql(database, "moderator_pending_actions")
+                    .contains("REGISTRATION_REJECTION_REASON"));
         }
         try (BackendDatabase database = BackendDatabase.open(path)) {
-            assertEquals("1:initial,2:backend_phase_2,3:user_locale,4:telegram_workflow_fixes",
+            assertEquals("1:initial,2:backend_phase_2,3:user_locale,4:telegram_workflow_fixes,5:telemetry_and_bot_blocking,6:ticket_closure_comments,7:chat_tags_and_registration_rejection",
                     migrations(database));
         }
     }
@@ -56,6 +60,30 @@ class DatabaseMigratorTest {
                 }
             }
             return value.toString();
+        });
+    }
+
+    private static boolean tableContains(BackendDatabase database, String table, String column) {
+        return database.transaction(connection -> {
+            try (var statement = connection.createStatement();
+                 var result = statement.executeQuery("PRAGMA table_info(" + table + ")")) {
+                while (result.next()) {
+                    if (column.equals(result.getString("name"))) return true;
+                }
+                return false;
+            }
+        });
+    }
+
+    private static String tableSql(BackendDatabase database, String table) {
+        return database.transaction(connection -> {
+            try (var statement = connection.prepareStatement(
+                    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")) {
+                statement.setString(1, table);
+                try (var result = statement.executeQuery()) {
+                    return result.next() ? result.getString(1) : "";
+                }
+            }
         });
     }
 }

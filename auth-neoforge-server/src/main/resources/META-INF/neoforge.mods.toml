@@ -4,7 +4,7 @@ license="All Rights Reserved"
 
 [[mods]]
 modId="mctgauth_server"
-version="0.5.0"
+version="0.6.4"
 displayName="MCTGAuth Server"
 description='''Dedicated-server authentication, local credential cache, and backend synchronization.'''
 

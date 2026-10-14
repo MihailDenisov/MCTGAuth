@@ -128,7 +128,7 @@ class AuthenticationAndSyncTest {
 
         UUID unknown = UUID.randomUUID();
         manager.connected(unknown, unknown, "NoAccount");
-        assertEquals(dev.example.mcauth.protocol.AuthFailureReason.ACCOUNT_NOT_SYNCHRONIZED,
+        assertEquals(dev.example.mcauth.protocol.AuthFailureReason.ACCOUNT_NOT_FOUND,
                 manager.hello(unknown, new ClientHelloPayload(1, "0.3", AuthProtocol.REQUIRED_FEATURES)).failure());
         manager.close();
     }
@@ -149,11 +149,52 @@ class AuthenticationAndSyncTest {
 
         var decision = manager.verify(player, new AuthResponsePayload(oldChallenge.sessionId(), 1, proof));
         assertFalse(decision.authenticated());
-        assertTrue(decision.retryAllowed());
-        assertEquals(2, decision.challenge().credentialVersion());
+        assertFalse(decision.retryAllowed());
+        assertEquals(dev.example.mcauth.protocol.AuthFailureReason.CREDENTIAL_OUTDATED, decision.failure());
         Arrays.fill(password, '\0');
         Arrays.fill(key, (byte) 0);
         Arrays.fill(proof, (byte) 0);
+        manager.close();
+    }
+
+    @Test
+    void visuallySimilarUnknownNicknameIsAccountNotFound() {
+        processor.apply(new SyncEvent(UUID.randomUUID(), SyncEventType.ACCOUNT_CREATED, 1, """
+                {"accountId":2,"nickname":"OKonHbIu_RAVE","normalizedNickname":"okonhbiu_rave",
+                "licensed":false,"enabled":true,"credentialVersion":1,"credentialVerifier":"%s"}
+                """.formatted(verifier), Instant.parse("2026-09-12T12:00:00Z")));
+        LoginSessionManager manager = new LoginSessionManager(store, Clock.systemUTC(), new SecureRandom(),
+                Duration.ofSeconds(60), 3);
+        UUID player = UUID.randomUUID();
+        manager.connected(player, player, "OKonHblu_RAVE");
+
+        var decision = manager.hello(player,
+                new ClientHelloPayload(1, "0.6.4", AuthProtocol.REQUIRED_FEATURES));
+
+        assertEquals(dev.example.mcauth.protocol.AuthFailureReason.ACCOUNT_NOT_FOUND, decision.failure());
+        manager.close();
+    }
+
+    @Test
+    void invalidSessionAndChallengeUseSafeSpecificReasons() {
+        processor.apply(accountEvent(UUID.randomUUID(), SyncEventType.ACCOUNT_CREATED, 1, true, true));
+        LoginSessionManager manager = new LoginSessionManager(store, Clock.systemUTC(), new SecureRandom(),
+                Duration.ofSeconds(60), 3);
+        UUID unknownConnection = UUID.randomUUID();
+        assertEquals(dev.example.mcauth.protocol.AuthFailureReason.INVALID_SESSION,
+                manager.hello(unknownConnection,
+                        new ClientHelloPayload(1, "0.6.4", AuthProtocol.REQUIRED_FEATURES)).failure());
+
+        UUID player = UUID.randomUUID();
+        manager.connected(player, player, "Test_Player");
+        var challenge = manager.hello(player,
+                new ClientHelloPayload(1, "0.6.4", AuthProtocol.REQUIRED_FEATURES)).challenge();
+        var invalid = manager.verify(player,
+                new AuthResponsePayload(UUID.randomUUID(), challenge.credentialVersion(), new byte[32]));
+        assertEquals(dev.example.mcauth.protocol.AuthFailureReason.INVALID_CHALLENGE, invalid.failure());
+        var replay = manager.verify(player,
+                new AuthResponsePayload(challenge.sessionId(), challenge.credentialVersion(), new byte[32]));
+        assertEquals(dev.example.mcauth.protocol.AuthFailureReason.REPLAY_DETECTED, replay.failure());
         manager.close();
     }
 

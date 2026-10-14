@@ -30,9 +30,21 @@ public final class TelegramBotService implements AutoCloseable {
             LocalizationService localization,
             LocaleResolver locales,
             ObjectMapper json) {
+        this(botToken, botUsername, adminChatId, howToPlayUrl, features, serverId, registrationTickets,
+                supportTickets, accounts, moderators, remoteCommands, pendingModeratorActions,
+                null, null, localization, locales, json);
+    }
+
+    public TelegramBotService(
+            String botToken, String botUsername, long adminChatId, String howToPlayUrl,
+            TelegramFeatureConfig features, String serverId, TicketService registrationTickets,
+            SupportTicketService supportTickets, AccountService accounts, ModeratorService moderators,
+            RemoteCommandService remoteCommands, ModeratorPendingActionService pendingModeratorActions,
+            ServerTelemetryService telemetry, TelegramUserModerationService userModeration,
+            LocalizationService localization, LocaleResolver locales, ObjectMapper json) {
         this(new TelegramApiClient(botToken, json), botUsername, adminChatId, howToPlayUrl, features, serverId,
                 registrationTickets, supportTickets, accounts, moderators, remoteCommands,
-                pendingModeratorActions, localization, locales, json);
+                pendingModeratorActions, telemetry, userModeration, localization, locales, json);
     }
 
     TelegramBotService(
@@ -51,10 +63,22 @@ public final class TelegramBotService implements AutoCloseable {
             LocalizationService localization,
             LocaleResolver locales,
             ObjectMapper json) {
+        this(telegram, botUsername, adminChatId, howToPlayUrl, features, serverId, registrationTickets,
+                supportTickets, accounts, moderators, remoteCommands, pendingModeratorActions,
+                null, null, localization, locales, json);
+    }
+
+    TelegramBotService(
+            TelegramClient telegram, String botUsername, long adminChatId, String howToPlayUrl,
+            TelegramFeatureConfig features, String serverId, TicketService registrationTickets,
+            SupportTicketService supportTickets, AccountService accounts, ModeratorService moderators,
+            RemoteCommandService remoteCommands, ModeratorPendingActionService pendingModeratorActions,
+            ServerTelemetryService telemetry, TelegramUserModerationService userModeration,
+            LocalizationService localization, LocaleResolver locales, ObjectMapper json) {
         this.telegram = Objects.requireNonNull(telegram, "telegram");
         this.router = new TelegramUpdateRouter(telegram, botUsername, adminChatId, howToPlayUrl, features, serverId,
                 registrationTickets, supportTickets, accounts, moderators, remoteCommands,
-                pendingModeratorActions, localization, locales, json);
+                pendingModeratorActions, telemetry, userModeration, localization, locales, json);
     }
 
     public void start() {

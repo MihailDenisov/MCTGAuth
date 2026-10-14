@@ -40,9 +40,7 @@ Russian:
 English:
 
 ```text
-🎮 How to play
-📦 Download Modpack       # only when enabled
-🗺 Server Map             # only when enabled
+ℹ️ Server Information
 🛠 Report a problem    ⚠️ Report a violation
 📋 My tickets          👤 My account
 ⚙️ Settings
@@ -51,17 +49,35 @@ English:
 Russian:
 
 ```text
-🎮 Как играть
-📦 Скачать сборку         # только когда включено
-🗺 Карта сервера          # только когда включено
+ℹ️ Информация о сервере
 🛠 Сообщить о проблеме    ⚠️ Сообщить о нарушении
 📋 Мои обращения          👤 Мой аккаунт
 ⚙️ Настройки
 ```
 
+## Server Information
+
+Selecting **Server Information** opens a submenu. `How to Play`, `Download Modpack`, and `Web Map` are no longer top-level buttons. The optional download and map buttons appear only when valid HTTPS URLs are enabled.
+
+English: `📖 How to Play` · `📦 Download Modpack` (optional) · `🗺 Web Map` (optional) · `📡 Server Status` (when enabled) · `⬅️ Back`.
+
+Russian: `📖 Как играть` · `📦 Скачать сборку` (необязательно) · `🗺 Веб-карта` (необязательно) · `📡 Статус сервера` (когда включён) · `⬅️ Назад`.
+
+The submenu uses stable locale-independent `server_info:*` callbacks. In particular, `server_info:back` always opens the ordinary user menu, even for moderators; administration remains available separately through `/adm`.
+
+Server Status uses the latest backend heartbeat. A heartbeat older than `heartbeatTimeoutSeconds` (default `60`) is shown as unavailable; its old count and player list are not presented as current. When fresh, the status shows online/max players and, if enabled, an inline **👥 Player List** button. The list contains active sessions and current session durations, or a localized empty-server message.
+
 Settings reopens the same English/Russian selector and immediately renders the main menu in the selected language. Problem/violation reports, registration, ticket history, account management, password changes, additional-account requests, buttons, errors, enum presentation, and UTC timestamp rendering support both locales.
 
-How to Play uses `howToPlay.en` / `howToPlay.ru` from the UTF-8 Telegram feature YAML and falls back to the bundled localized text. `HOW_TO_PLAY_URL`, when configured, adds a detailed-guide button. Optional map and modpack reply actions expose configured HTTPS URL buttons; URLs are never callback identifiers.
+When `memberTags.enabled` is configured, Settings also contains **🏷 Chat Tag** / **🏷 Тег чата**. It lists only enabled Minecraft accounts owned by the current numeric Telegram identity plus **No tag**. No tag is the default. The backend stores an account ID, revalidates ownership on every callback, and resolves the current authoritative nickname when synchronizing the explicitly configured target chat. Telegram administrators/owners are never assigned a game tag; a user may save a preference while outside the chat or during an API outage for later reconciliation.
+
+How to Play uses `howToPlay.en` / `howToPlay.ru` from the UTF-8 Telegram feature YAML and falls back to the bundled localized text. `HOW_TO_PLAY_URL`, when configured, adds a detailed-guide button. Optional map and modpack submenu callbacks open views containing the configured HTTPS URL buttons; URLs are never callback identifiers.
+
+## My Account and playtime
+
+The **My Account** submenu contains **⏱ My Playtime** / **⏱ Моё время на сервере**. With multiple owned Minecraft accounts, the bot first shows only those owned accounts for selection. The backend summary includes the active session and reports rolling last 24 hours, rolling last 7 days, and all recorded time. Overlapping intervals are merged, and ownership is checked server-side.
+
+Blocked Telegram users receive only the localized restricted-access response and cannot start registration, tickets/reports, add-account requests, or password workflows. Bot blocking does not disable Minecraft accounts; `minecraft_accounts.enabled` remains a separate moderator control.
 
 When the optional registration subscription gate is enabled, Apply calls Telegram `getChatMember` before any wizard state is created. Non-members receive Subscribe and stable `registration:subscription:retry` buttons. Temporary API failures receive a localized retry and are not classified as non-members.
 

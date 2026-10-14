@@ -30,7 +30,7 @@ final class TelegramApiClient implements TelegramClient {
         ObjectNode body = json.createObjectNode();
         body.put("offset", offset);
         body.put("timeout", 30);
-        body.putArray("allowed_updates").add("message").add("callback_query");
+        body.putArray("allowed_updates").add("message").add("callback_query").add("chat_member");
         JsonNode result = call("getUpdates", body).path("result");
         if (!result.isArray()) {
             throw new TelegramApiException("Telegram returned an invalid updates response");
@@ -48,10 +48,41 @@ final class TelegramApiClient implements TelegramClient {
     }
 
     @Override
+    public TelegramChatMember getChatMember(long chatId, long telegramUserId)
+            throws IOException, InterruptedException {
+        ObjectNode body = json.createObjectNode();
+        body.put("chat_id", chatId);
+        body.put("user_id", telegramUserId);
+        return TelegramChatMember.fromTelegram(call("getChatMember", body).path("result"));
+    }
+
+    @Override
+    public void setChatMemberTag(long chatId, long telegramUserId, String tag)
+            throws IOException, InterruptedException {
+        ObjectNode body = json.createObjectNode();
+        body.put("chat_id", chatId);
+        body.put("user_id", telegramUserId);
+        body.put("tag", tag == null ? "" : tag);
+        call("setChatMemberTag", body);
+    }
+
+    @Override
     public long sendMessage(long chatId, String text, JsonNode replyMarkup) throws IOException, InterruptedException {
+        return sendMessage(chatId, text, replyMarkup, null);
+    }
+
+    @Override
+    public long sendHtmlMessage(long chatId, String text, JsonNode replyMarkup)
+            throws IOException, InterruptedException {
+        return sendMessage(chatId, text, replyMarkup, "HTML");
+    }
+
+    private long sendMessage(long chatId, String text, JsonNode replyMarkup, String parseMode)
+            throws IOException, InterruptedException {
         ObjectNode body = json.createObjectNode();
         body.put("chat_id", chatId);
         body.put("text", text);
+        if (parseMode != null) body.put("parse_mode", parseMode);
         if (replyMarkup != null) {
             body.set("reply_markup", replyMarkup);
         }

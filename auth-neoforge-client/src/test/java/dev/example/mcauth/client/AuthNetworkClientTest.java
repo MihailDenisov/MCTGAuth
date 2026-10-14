@@ -137,8 +137,13 @@ class AuthNetworkClientTest {
     @Test
     void everyTerminalReasonStopsTheCurrentLifecycleWithoutAutomaticConnectionWork() {
         AuthFailureReason[] terminalReasons = {
+                AuthFailureReason.ACCOUNT_NOT_FOUND,
                 AuthFailureReason.ACCOUNT_NOT_SYNCHRONIZED,
                 AuthFailureReason.ACCOUNT_DISABLED,
+                AuthFailureReason.CREDENTIAL_OUTDATED,
+                AuthFailureReason.INVALID_CHALLENGE,
+                AuthFailureReason.REPLAY_DETECTED,
+                AuthFailureReason.INVALID_SESSION,
                 AuthFailureReason.PROTOCOL_MISMATCH,
                 AuthFailureReason.CLIENT_MISSING,
                 AuthFailureReason.TOO_MANY_ATTEMPTS,

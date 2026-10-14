@@ -46,6 +46,42 @@ class TicketServiceTest {
     }
 
     @Test
+    void registrationRejectionReasonIsPersistedAndCannotBeReplacedBySecondDecision() {
+        long ticketId = tickets.submitRegistration(registration(2011L, "RejectedPlayer"));
+        ModeratorIdentity first = new ModeratorIdentity(MODERATOR_ID, "first_mod");
+        ModeratorIdentity second = new ModeratorIdentity(OTHER_MODERATOR_ID, "second_mod");
+
+        try (TicketDecisionResult rejected = tickets.rejectRegistration(
+                ticketId, first, "Registration details could not be verified")) {
+            assertEquals(TicketDecisionResult.Outcome.REJECTED, rejected.outcome());
+        }
+        try (TicketDecisionResult stale = tickets.rejectRegistration(
+                ticketId, second, "replacement reason")) {
+            assertEquals(TicketDecisionResult.Outcome.ALREADY_DECIDED, stale.outcome());
+        }
+
+        database.transaction(connection -> {
+            assertEquals(1, count(connection, "ticket_decisions"));
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    SELECT t.status, d.decision, d.comment, d.moderator_telegram_id
+                    FROM tickets t
+                    JOIN ticket_decisions d ON d.ticket_id = t.id
+                    WHERE t.id = ?
+                    """)) {
+                statement.setLong(1, ticketId);
+                try (ResultSet result = statement.executeQuery()) {
+                    assertTrue(result.next());
+                    assertEquals("REJECTED", result.getString("status"));
+                    assertEquals("REJECTED", result.getString("decision"));
+                    assertEquals("Registration details could not be verified", result.getString("comment"));
+                    assertEquals(MODERATOR_ID, result.getLong("moderator_telegram_id"));
+                }
+            }
+            return null;
+        });
+    }
+
+    @Test
     void approvalIsAtomicAuditedAndIdempotent() {
         long ticketId = tickets.submitRegistration(registration(2002L, "Steve"));
         String plaintext;

@@ -61,15 +61,19 @@ final class AuthPayloadHandler {
             LOGGER.info("[MCTGAuth] Authentication successful: player={} uuid={} credentialVersion={}",
                     player.getGameProfile().getName(), player.getUUID(), decision.credentialVersion());
             PacketDistributor.sendToPlayer(player, new AuthSuccessPayload(decision.sessionId()));
+            AuthServerMod runtime = AuthServerMod.instance();
+            if (runtime != null) runtime.playerAuthenticated(player);
             return;
         }
         if (decision.failure() != null) {
-            PacketDistributor.sendToPlayer(player, new AuthFailurePayload(decision.sessionId(), decision.failure(),
-                    decision.retryAllowed(), decision.remainingAttempts()));
             if (!decision.retryAllowed()) {
+                // Protocol 1 ordinal compatibility: newly precise terminal reasons travel in the
+                // disconnect Component, not in auth_failure, whose legacy ordinal set must stay stable.
                 rejectAndDisconnect(player, decision.failure(), null);
                 return;
             }
+            PacketDistributor.sendToPlayer(player, new AuthFailurePayload(decision.sessionId(), decision.failure(),
+                    true, decision.remainingAttempts()));
             logRejection(player, decision.failure(), null);
         }
         if (decision.challenge() != null) PacketDistributor.sendToPlayer(player, decision.challenge());
@@ -120,7 +124,10 @@ final class AuthPayloadHandler {
             case PROTOCOL_MISMATCH -> "mctgauth.error.protocol_mismatch";
             case CLIENT_MISSING -> "mctgauth.error.mod_required";
             case ACCOUNT_DISABLED -> "mctgauth.error.account_disabled";
+            case ACCOUNT_NOT_FOUND -> "mctgauth.error.account_not_found";
             case ACCOUNT_NOT_SYNCHRONIZED -> "mctgauth.error.account_not_synchronized";
+            case CREDENTIAL_OUTDATED -> "mctgauth.error.credential_outdated";
+            case INVALID_CHALLENGE, REPLAY_DETECTED, INVALID_SESSION -> "mctgauth.error.verification_failed";
             case INTERNAL_AUTH_ERROR -> "mctgauth.error.internal";
         };
     }

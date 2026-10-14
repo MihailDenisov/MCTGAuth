@@ -13,12 +13,15 @@
   "mctgauth.auth.password_required": "This server requires MCTGAuth authentication. Enter the password issued by the Telegram bot.",
   "mctgauth.auth.stored_rejected": "Stored MCTGAuth password was rejected. Check the password issued by the Telegram bot.",
   "mctgauth.auth.success": "MCTGAuth: authenticated.",
-  "mctgauth.error.invalid_credentials": "Authentication failed. Check your credentials.",
-  "mctgauth.error.timeout": "MCTGAuth authentication timed out. Use Reconnect manually when you are ready.",
-  "mctgauth.error.protocol_mismatch": "Incompatible MCTGAuth Client version.",
+  "mctgauth.error.invalid_credentials": "Authentication failed.\n\nCheck your MCTGAuth password in the client settings.",
+  "mctgauth.error.timeout": "Authentication timed out.\n\nReconnect to the server and try again.",
+  "mctgauth.error.protocol_mismatch": "Your MCTGAuth version is incompatible with the server.\n\nUpdate the modpack or MCTGAuth and try again.",
   "mctgauth.error.mod_required": "This server requires MCTGAuth Client. Install the required mod and reconnect.",
-  "mctgauth.error.account_disabled": "Your account is disabled. Contact the server administration.",
+  "mctgauth.error.account_disabled": "This Minecraft profile is blocked.\n\nContact the server administration for more information.",
   "mctgauth.error.full_reset": "Server authentication data has been reset.\nYou must register again before joining the server.",
-  "mctgauth.error.account_not_synchronized": "Your account has not been synchronized with this server yet.\n\nWait for synchronization to complete or contact an administrator.",
-  "mctgauth.error.internal": "Server authentication is temporarily unavailable."
+  "mctgauth.error.account_not_found": "No registration data was found for this Minecraft profile.\n\nMake sure this nickname is registered through the Telegram bot and matches your current Minecraft name.",
+  "mctgauth.error.account_not_synchronized": "Your profile data has not yet synchronized with the game server.\n\nTry again later. If the problem persists, contact an administrator.",
+  "mctgauth.error.credential_outdated": "Your MCTGAuth password has changed.\n\nUpdate the saved password in the client settings and reconnect.",
+  "mctgauth.error.verification_failed": "Authentication could not be verified.\n\nReconnect to the server. If the error persists, contact an administrator.",
+  "mctgauth.error.internal": "An internal authentication error occurred.\n\nTry again later. If the problem persists, contact an administrator."
 }

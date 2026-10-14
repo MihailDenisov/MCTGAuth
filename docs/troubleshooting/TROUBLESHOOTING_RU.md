@@ -78,7 +78,7 @@ sudo awk -F= '/^[A-Z][A-Z0-9_]*=/{print $1}' /etc/minecraft-auth.env
 
 Клиент хранит пароль в открытом виде в `.minecraft/config/mctgauth-client.json`; защищайте этот файл и никогда не включайте его в диагностику. Откройте **MCTGAuth** на титульном экране или **Mods → MCTGAuth Client → Config**, сохраните актуальный пароль и повторите вход. После смены пароля backend сохранённый пароль может быть отклонён.
 
-Причины `ACCOUNT_NOT_SYNCHRONIZED`, `ACCOUNT_DISABLED`, `AUTH_TIMEOUT`, `TOO_MANY_ATTEMPTS`, `PROTOCOL_MISMATCH`, `CLIENT_MISSING` и `INTERNAL_AUTH_ERROR` завершают текущий цикл аутентификации. MCTGAuth не вызывает API подключения Minecraft и не планирует автоматический reconnect. Вернитесь на сервер или подключитесь вручную; подключение без записи MCTGAuth `Starting reconnect` инициировано не этим модом.
+Конечные причины аутентификации, включая `ACCOUNT_NOT_FOUND`, `ACCOUNT_NOT_SYNCHRONIZED`, `ACCOUNT_DISABLED`, `INVALID_CREDENTIALS`, `CREDENTIAL_OUTDATED`, `AUTH_TIMEOUT`, несовместимость протокола, безопасную ошибку проверки и внутреннюю ошибку, завершают текущий цикл. MCTGAuth не вызывает API подключения Minecraft и не планирует автоматический reconnect. Вернитесь на сервер или подключитесь вручную; подключение без записи MCTGAuth `Starting reconnect` инициировано не этим модом.
 
 ## Риск AutoModPack и стороннего reconnect
 

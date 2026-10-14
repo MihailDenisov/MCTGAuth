@@ -101,7 +101,7 @@ sudo chmod 0600 /etc/minecraft-auth.env
 TELEGRAM_BOT_USERNAME=ExampleBot
 ```
 
-Без этой переменной backend 0.5.0 намеренно не запустится: значение нужно для корректной обработки команд вида `/menu@ExampleBot` и игнорирования команд, адресованных другим ботам в общей группе.
+Без этой переменной backend 0.6.1 и новее намеренно не запустится: значение нужно для корректной обработки команд вида `/menu@ExampleBot` и игнорирования команд, адресованных другим ботам в общей группе.
 
 `install.sh` также создаёт только при отсутствии `/etc/minecraft-auth-telegram.yaml` (`root:minecraft-auth`, `0640`). Укажите его через `TELEGRAM_FEATURE_CONFIG_PATH`. В UTF-8 YAML независимо настраиваются многострочные `howToPlay.en`/`ru`, необязательная `registration.subscriptionCheck`, `serverMap` и `modpackDownload`; все дополнительные функции по умолчанию выключены. Некорректные ссылки скрываются с предупреждением, а встроенный текст остаётся fallback. Изменения загружаются при старте:
 
@@ -128,7 +128,7 @@ Developer PC
 
 ```bash
 sudo /opt/minecraft-auth-tools/update.sh \
-  /home/authbot/uploads/auth-backend-0.5.0.tar.gz
+  /home/authbot/uploads/auth-backend-0.6.4.tar.gz
 ```
 
 Либо передайте распакованный `installDist`:

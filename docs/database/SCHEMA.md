@@ -3,7 +3,7 @@
 This is a logical schema, not a migration file yet.
 
 ## `users`
-Telegram identity: `telegram_id` PK, username snapshot, account status, persisted `locale` (`en` or `ru`), and created/updated timestamps. Locale values are stable codes rather than translated names.
+Telegram identity: `telegram_id` PK, username snapshot, account status, persisted `locale` (`en` or `ru`), dedicated `bot_blocked` moderation state, and created/updated timestamps. Bot blocking does not change `minecraft_accounts.enabled`.
 
 ## `minecraft_accounts`
 Account ID, owner Telegram ID, Minecraft UUID (nullable until known), unique normalized nickname, license flag, enabled flag, creation method (`REGISTRATION_TICKET`, `ADD_ACCOUNT_TICKET`, `ADMIN_MANUAL`), creator moderator ID where applicable, credential version metadata, timestamps.
@@ -17,7 +17,7 @@ Global numeric ticket ID, type, status, creator Telegram ID/username snapshot, o
 Separate tables such as `registration_ticket_data`, `problem_ticket_data`, `violation_ticket_data`, and `add_account_ticket_data`. Avoid a single table with dozens of nullable type-specific columns.
 
 ## `ticket_messages`
-Ticket ID, sender type (`USER`, `MODERATOR`, `SYSTEM`), sender Telegram ID, text, timestamp.
+Ticket ID, sender type (`USER`, `MODERATOR`, `SYSTEM`), sender Telegram ID, text, logical message type (`MESSAGE` or `CLOSURE_COMMENT`), visibility (`PUBLIC` or `INTERNAL`), timestamp. Initial closure comments are public and user-visible.
 
 ## `ticket_attachments`
 Ticket ID, Telegram `file_id`, `file_unique_id`, media type, optional caption, timestamp. Do not download media by default.
@@ -43,7 +43,7 @@ Command creation/completion must also emit `audit_log` records. Command payload/
 
 ## `moderator_pending_actions`
 
-One expiring private-input action per moderator numeric Telegram ID. Phase 0.3 persists `REPLY_TO_TICKET` with its ticket ID, creation time, and expiry so an action started from an admin-group callback can be completed after a restart in that moderator's private chat. Completion and `/cancel` remove only the acting moderator's row.
+One expiring private-input action per moderator numeric Telegram ID. `REPLY_TO_TICKET` and `TICKET_CLOSURE_COMMENT` store the ticket ID, optional target status, creation time, and expiry so an action started from an admin-group callback can be completed after a restart in that moderator's private chat. Completion and `/cancel` remove only the acting moderator's row.
 
 ## Migrations
 
@@ -53,5 +53,14 @@ One expiring private-input action per moderator numeric Telegram ID. Phase 0.3 p
 - `V002__backend_phase_2.sql`: affected-account/assignment fields, problem/violation/add-account data, messages, attachment references, password-change history, moderator permissions, and remote commands.
 - `V003__user_locale.sql`: persisted English/Russian Telegram interface preference on `users`.
 - `V004__telegram_workflow_fixes.sql`: nullable violation offender nickname and expiring per-moderator pending actions.
+- `V005__telemetry_and_bot_blocking.sql`: server heartbeat state, idempotent player events, timestamp-based player sessions, and Telegram bot blocking.
+- `V006__ticket_closure_comments.sql`: typed/visible ticket messages and persisted resolve/close comment input targets.
+- `V007__chat_tags_and_registration_rejection.sql`: nullable authoritative-account chat-tag preferences, a managed-tag marker used for reliable clearing/reconciliation, and persisted registration-rejection reason input.
+
+`users.chat_tag_account_id` references `minecraft_accounts(id)` with `ON DELETE SET NULL`. `users.chat_tag_managed` distinguishes the untouched default from an explicit managed “No tag” preference, allowing a failed Telegram clear to be retried without storing arbitrary tag text. New and existing users default to no managed tag.
+
+## Telemetry tables
+
+`server_status` is keyed by `server_id` and stores instance/process timing, last heartbeat, player counts, and clean shutdown. `player_sessions` references the authoritative Minecraft account ID and uses nicknames only as snapshots. `telemetry_events` de-duplicates stable join/leave UUIDs. A new instance heartbeat finalizes open sessions from the prior instance at its last trustworthy heartbeat.
 
 The current schema requires every Minecraft account to have an owning Telegram user. Ownerless technical accounts are deferred.

@@ -13,3 +13,7 @@ Phase 2 implements these transitions in `SupportTicketService`, persists user/mo
 Violation tickets may store a null offender nickname when the reporter does not know it; UI rendering localizes this as Unknown rather than persisting a placeholder.
 
 A moderator reply initiated from a shared admin-group card creates an expiring `moderator_pending_actions` row keyed by moderator Telegram ID. The same enabled and assigned moderator completes it with private-chat text. Successful completion or `/cancel` removes the row; different moderators never share interaction state.
+
+Resolve and Close first present an explicit choice: add a public closing comment, finish without a comment, or cancel. Comment input uses the same persisted per-moderator mechanism with a validated target status. The status compare-and-set, optional `CLOSURE_COMMENT` history row, and audit record commit in one transaction; a stale second action cannot replace the first closure or comment.
+
+Rejecting a registration likewise offers Add Reason, Reject Without Reason, or Cancel. A reason is collected in private chat through a persisted moderator-specific action, limited to 1,000 characters, and stored as the existing registration decision comment in the same transaction as the `REJECTED` transition. It is sent to the applicant as plain text. A stale or unauthorized action cannot append a comment after another moderator finalizes the request.

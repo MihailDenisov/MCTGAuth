@@ -39,9 +39,24 @@ class ServerAuthConfigTest {
                 Duration.ofSeconds(60), 3, 100, false, true));
     }
 
+    @Test
+    void heartbeatIntervalMustStayWithinDocumentedBounds() {
+        assertThrows(IllegalArgumentException.class, () -> telemetryValues(Duration.ZERO));
+        assertThrows(IllegalArgumentException.class, () -> telemetryValues(Duration.ofSeconds(-1)));
+        assertThrows(IllegalArgumentException.class, () -> telemetryValues(Duration.ofSeconds(9)));
+        assertDoesNotThrow(() -> telemetryValues(Duration.ofSeconds(20)));
+    }
+
     private static ServerAuthConfig.Values values(String baseUrl, boolean allowHttp) {
         return new ServerAuthConfig.Values(URI.create(baseUrl), "survival-main",
                 Duration.ofSeconds(10), Duration.ofSeconds(5), Duration.ofSeconds(15),
                 Duration.ofSeconds(60), 3, 100, allowHttp, true);
+    }
+
+    private static ServerAuthConfig.Values telemetryValues(Duration heartbeatInterval) {
+        return new ServerAuthConfig.Values(URI.create("https://auth.example.com"), "survival-main",
+                Duration.ofSeconds(10), Duration.ofSeconds(5), Duration.ofSeconds(15),
+                Duration.ofSeconds(60), 3, 100, false, true,
+                true, heartbeatInterval, 10000);
     }
 }

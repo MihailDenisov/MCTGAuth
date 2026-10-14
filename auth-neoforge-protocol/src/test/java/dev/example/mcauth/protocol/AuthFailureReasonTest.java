@@ -18,14 +18,19 @@ class AuthFailureReasonTest {
                 "PROTOCOL_MISMATCH",
                 "CLIENT_MISSING",
                 "ACCOUNT_DISABLED",
+                "INTERNAL_AUTH_ERROR",
                 "ACCOUNT_NOT_SYNCHRONIZED",
-                "INTERNAL_AUTH_ERROR"
+                "ACCOUNT_NOT_FOUND",
+                "CREDENTIAL_OUTDATED",
+                "INVALID_CHALLENGE",
+                "REPLAY_DETECTED",
+                "INVALID_SESSION"
         }, Arrays.stream(AuthFailureReason.values()).map(Enum::name).toArray(String[]::new));
     }
 
     @Test
     void payloadDistinguishesSameConnectionRetryFromTerminalFailure() {
         assertFalse(new AuthFailurePayload(null, AuthFailureReason.INVALID_CREDENTIALS, true, 2).terminal());
-        assertTrue(new AuthFailurePayload(null, AuthFailureReason.ACCOUNT_NOT_SYNCHRONIZED, false, 0).terminal());
+        assertTrue(new AuthFailurePayload(null, AuthFailureReason.ACCOUNT_NOT_FOUND, false, 0).terminal());
     }
 }

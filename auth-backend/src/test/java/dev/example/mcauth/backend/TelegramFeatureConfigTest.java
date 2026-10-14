@@ -39,6 +39,10 @@ class TelegramFeatureConfigTest {
                 modpackDownload:
                   enabled: true
                   url: "https://t.me/example_channel/123"
+                memberTags:
+                  enabled: true
+                  chatId: -1001234567890
+                  excludeChatAdministrators: true
                 """, StandardCharsets.UTF_8);
 
         TelegramFeatureConfig config = TelegramFeatureConfig.load(file);
@@ -47,6 +51,9 @@ class TelegramFeatureConfigTest {
         assertTrue(config.subscriptionCheckAvailable());
         assertEquals("https://map.example.com/", config.serverMapUrl());
         assertEquals("https://t.me/example_channel/123", config.modpackDownloadUrl());
+        assertTrue(config.memberTagsEnabled());
+        assertEquals(-1001234567890L, config.memberTagsChatId());
+        assertTrue(config.excludeChatAdministrators());
     }
 
     @Test
@@ -59,12 +66,15 @@ class TelegramFeatureConfigTest {
                 modpackDownload: { enabled: true, url: "http://insecure.example" }
                 registration:
                   subscriptionCheck: { enabled: true, channel: "not-a-channel" }
+                memberTags: { enabled: true, chatId: 12345 }
                 """, StandardCharsets.UTF_8);
         TelegramFeatureConfig config = TelegramFeatureConfig.load(invalid);
         assertNull(config.serverMapUrl());
         assertNull(config.modpackDownloadUrl());
         assertTrue(config.subscriptionCheckEnabled());
         assertFalse(config.subscriptionCheckAvailable());
+        assertFalse(config.memberTagsEnabled());
+        assertNull(config.memberTagsChatId());
     }
 
     @Test
@@ -82,5 +92,18 @@ class TelegramFeatureConfigTest {
             assertEquals(TelegramMembership.NOT_SUBSCRIBED,
                     TelegramMembership.fromChatMember(json.readTree("{\"status\":\"" + state + "\"}")));
         }
+    }
+
+    @Test
+    void detailedChatMembershipDistinguishesAdministratorsOwnersAndMembers() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        assertEquals(TelegramChatMember.Role.OWNER,
+                TelegramChatMember.fromTelegram(json.readTree("{\"status\":\"creator\"}")).role());
+        assertEquals(TelegramChatMember.Role.ADMINISTRATOR,
+                TelegramChatMember.fromTelegram(json.readTree("{\"status\":\"administrator\"}")).role());
+        TelegramChatMember member = TelegramChatMember.fromTelegram(
+                json.readTree("{\"status\":\"member\",\"tag\":\"Player\"}"));
+        assertEquals(TelegramChatMember.Role.MEMBER, member.role());
+        assertEquals("Player", member.tag());
     }
 }

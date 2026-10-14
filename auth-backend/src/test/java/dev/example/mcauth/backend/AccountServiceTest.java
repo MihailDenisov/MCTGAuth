@@ -14,6 +14,44 @@ class AccountServiceTest {
     @TempDir Path temporaryDirectory;
 
     @Test
+    void chatTagSelectionEnforcesOwnershipEnabledStateAndClearsWithAccountDisable() throws Exception {
+        try (BackendTestContext context = new BackendTestContext(temporaryDirectory.resolve("chat-tag.db"))) {
+            long ownerId = 3010L;
+            long ownAccountId = context.register(ownerId, "TagOwner");
+            long otherAccountId = context.register(3011L, "OtherOwner");
+            ModeratorIdentity moderator = new ModeratorIdentity(BackendTestContext.MODERATOR_ID, "mod");
+
+            ChatTagPreference initial = context.accounts.chatTagPreference(ownerId);
+            assertEquals(ownerId, initial.telegramUserId());
+            assertEquals(null, initial.accountId());
+            assertEquals(null, initial.minecraftName());
+
+            ChatTagPreference selected = context.accounts.selectChatTag(ownerId, ownAccountId);
+            assertEquals(ownAccountId, selected.accountId());
+            assertEquals("TagOwner", selected.minecraftName());
+
+            WorkflowException otherOwner = assertThrows(WorkflowException.class,
+                    () -> context.accounts.selectChatTag(ownerId, otherAccountId));
+            assertEquals(WorkflowException.Code.NOT_FOUND, otherOwner.code());
+            assertEquals(ownAccountId, context.accounts.chatTagPreference(ownerId).accountId());
+
+            context.accounts.disable(moderator, ownAccountId, "test disable");
+            assertEquals(null, context.accounts.chatTagPreference(ownerId).accountId());
+            WorkflowException disabled = assertThrows(WorkflowException.class,
+                    () -> context.accounts.selectChatTag(ownerId, ownAccountId));
+            assertEquals(WorkflowException.Code.INVALID_STATE, disabled.code());
+
+            context.accounts.enable(moderator, ownAccountId, "test enable");
+            context.accounts.selectChatTag(ownerId, ownAccountId);
+            ChatTagPreference cleared = context.accounts.selectChatTag(ownerId, null);
+            assertEquals(null, cleared.accountId());
+            assertEquals(null, cleared.minecraftName());
+            assertTrue(context.accounts.chatTagPreferences().stream()
+                    .anyMatch(preference -> preference.telegramUserId() == ownerId && !preference.hasTag()));
+        }
+    }
+
+    @Test
     void passwordChangeIncrementsVersionAndIsRateLimited() throws Exception {
         try (BackendTestContext context = new BackendTestContext(temporaryDirectory.resolve("password.db"))) {
             long accountId = context.register(3001L, "PasswordUser");

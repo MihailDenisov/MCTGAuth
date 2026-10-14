@@ -2,3 +2,6 @@ V001__initial.sql
 V002__backend_phase_2.sql
 V003__user_locale.sql
 V004__telegram_workflow_fixes.sql
+V005__telemetry_and_bot_blocking.sql
+V006__ticket_closure_comments.sql
+V007__chat_tags_and_registration_rejection.sql

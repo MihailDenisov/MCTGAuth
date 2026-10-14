@@ -18,6 +18,9 @@ public final class ServerAuthConfig {
     private static final ModConfigSpec.IntValue BATCH_SIZE;
     private static final ModConfigSpec.BooleanValue ALLOW_HTTP;
     private static final ModConfigSpec.BooleanValue DISCONNECT_DISABLED;
+    private static final ModConfigSpec.BooleanValue TELEMETRY_ENABLED;
+    private static final ModConfigSpec.IntValue HEARTBEAT_INTERVAL;
+    private static final ModConfigSpec.IntValue TELEMETRY_QUEUE_LIMIT;
 
     static {
         ModConfigSpec.Builder builder = new ModConfigSpec.Builder();
@@ -41,6 +44,10 @@ public final class ServerAuthConfig {
         DISCONNECT_DISABLED = builder.define("disconnectPlayerWhenAccountDisabled", true);
         builder.pop().push("sync");
         BATCH_SIZE = builder.defineInRange("batchSize", 100, 1, 100);
+        builder.pop().push("telemetry");
+        TELEMETRY_ENABLED = builder.define("enabled", true);
+        HEARTBEAT_INTERVAL = builder.defineInRange("heartbeatIntervalSeconds", 20, 10, 300);
+        TELEMETRY_QUEUE_LIMIT = builder.defineInRange("maxQueuedPlayerEvents", 10000, 100, 100000);
         builder.pop();
         SPEC = builder.build();
     }
@@ -52,7 +59,8 @@ public final class ServerAuthConfig {
         return new Values(URI.create(BASE_URL.get()), SERVER_ID.get(), Duration.ofSeconds(POLL_INTERVAL.get()),
                 Duration.ofSeconds(CONNECT_TIMEOUT.get()), Duration.ofSeconds(REQUEST_TIMEOUT.get()),
                 Duration.ofSeconds(AUTH_TIMEOUT.get()), MAX_ATTEMPTS.get(), BATCH_SIZE.get(), ALLOW_HTTP.get(),
-                DISCONNECT_DISABLED.get());
+                DISCONNECT_DISABLED.get(), TELEMETRY_ENABLED.get(), Duration.ofSeconds(HEARTBEAT_INTERVAL.get()),
+                TELEMETRY_QUEUE_LIMIT.get());
     }
 
     static String configuredApiToken() {
@@ -62,7 +70,16 @@ public final class ServerAuthConfig {
     public record Values(URI baseUrl, String serverId, Duration pollInterval, Duration connectTimeout,
                          Duration requestTimeout, Duration authenticationTimeout, int maxAttempts,
                          int batchSize, boolean allowInsecureHttpForDevelopment,
-                         boolean disconnectPlayerWhenAccountDisabled) {
+                         boolean disconnectPlayerWhenAccountDisabled, boolean telemetryEnabled,
+                         Duration heartbeatInterval, int telemetryQueueLimit) {
+        public Values(URI baseUrl, String serverId, Duration pollInterval, Duration connectTimeout,
+                      Duration requestTimeout, Duration authenticationTimeout, int maxAttempts,
+                      int batchSize, boolean allowInsecureHttpForDevelopment,
+                      boolean disconnectPlayerWhenAccountDisabled) {
+            this(baseUrl, serverId, pollInterval, connectTimeout, requestTimeout, authenticationTimeout,
+                    maxAttempts, batchSize, allowInsecureHttpForDevelopment,
+                    disconnectPlayerWhenAccountDisabled, true, Duration.ofSeconds(20), 10000);
+        }
         public Values {
             if (baseUrl == null || serverId == null || !serverId.matches("[A-Za-z0-9._-]{1,64}")) {
                 throw new IllegalArgumentException("Invalid backend configuration");
@@ -71,8 +88,12 @@ public final class ServerAuthConfig {
             requireRange(connectTimeout, 1, 60, "connectTimeoutSeconds");
             requireRange(requestTimeout, 1, 120, "requestTimeoutSeconds");
             requireRange(authenticationTimeout, 10, 300, "authentication.timeoutSeconds");
+            requireRange(heartbeatInterval, 10, 300, "telemetry.heartbeatIntervalSeconds");
             if (maxAttempts < 1 || maxAttempts > 10 || batchSize < 1 || batchSize > 100) {
                 throw new IllegalArgumentException("Invalid authentication or sync configuration");
+            }
+            if (telemetryQueueLimit < 100 || telemetryQueueLimit > 100000) {
+                throw new IllegalArgumentException("Invalid telemetry queue limit");
             }
             String scheme = baseUrl.getScheme();
             if (!"https".equalsIgnoreCase(scheme)

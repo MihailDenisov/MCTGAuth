@@ -33,6 +33,10 @@ public final class BackendApplication {
                 database, moderators, audit, json, clock, config.serverId());
         ModeratorPendingActionService pendingModeratorActions =
                 new ModeratorPendingActionService(database, moderators, clock);
+        ServerTelemetryService telemetry = new ServerTelemetryService(database, clock, config.serverId(),
+                java.time.Duration.ofSeconds(telegramFeatures.heartbeatTimeoutSeconds()));
+        TelegramUserModerationService userModeration = new TelegramUserModerationService(
+                database, moderators, audit, clock);
         LocalizationService localization = new LocalizationService();
         LocaleResolver locales = new LocaleResolver(
                 database, config.adminLocale(), config.defaultUserLocale());
@@ -40,10 +44,10 @@ public final class BackendApplication {
                 config.telegramBotToken(), config.telegramBotUsername(), config.telegramAdminChatId(),
                 config.howToPlayUrl(), telegramFeatures,
                 config.serverId(), tickets, supportTickets, accounts, moderators, remoteCommands,
-                pendingModeratorActions, localization, locales, json);
+                pendingModeratorActions, telemetry, userModeration, localization, locales, json);
         BackendHttpServer http = new BackendHttpServer(
                 config.httpBindAddress(), config.httpPort(), config.authApiToken(), database,
-                bot::isRunning, new SyncApiService(syncEvents, config.serverId()), remoteCommands, json);
+                bot::isRunning, new SyncApiService(syncEvents, config.serverId()), remoteCommands, telemetry, json);
 
         Runtime.getRuntime().addShutdownHook(Thread.ofPlatform().unstarted(() -> {
             http.close();

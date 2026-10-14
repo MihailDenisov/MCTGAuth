@@ -4,7 +4,7 @@
 
 MCTGAuth — система авторизации и поддержки на Java 21 для Minecraft 1.21.1 и NeoForge 21.1.244. Telegram-бот управляет регистрацией, владельцами аккаунтов, обращениями, модерацией и сменой паролей; отдельные клиентский и серверный моды выполняют защищённую от повторного воспроизведения авторизацию без передачи пароля в открытом виде.
 
-Текущая версия: **0.5.0**.
+Текущая версия: **0.6.4**.
 
 ## Архитектура
 
@@ -23,6 +23,16 @@ flowchart TD
 - `auth-neoforge-client` хранит введённый пользователем пароль локально и вычисляет привязанное к nonce доказательство вне render thread.
 - Minecraft не обращается к Telegram API и не читает SQLite-файл backend.
 - При недоступности backend операции управления и новая синхронизация останавливаются, но уже записанные в серверный кэш аккаунты могут продолжать входить.
+
+В версии 0.6.0 также появились авторизованная исходящая телеметрия сервера (heartbeat по умолчанию каждые 20 секунд), надёжная доставка событий игроков, статус и список игроков, расчёт времени на сервере в backend, разделы «Информация о сервере» и «Обращения», постраничная статистика игроков и независимая блокировка Telegram-бота. См. [примечания к выпуску 0.6.0](docs/RELEASE_NOTES_0.6.0_RU.md) для реализованного поведения и значений по умолчанию.
+
+Версия 0.6.1 добавляет необязательный публичный комментарий модератора при решении или закрытии обращения, транзакционное сохранение истории и аудита, а также защиту от устаревших действий. См. [примечания к выпуску 0.6.1](docs/RELEASE_NOTES_0.6.1_RU.md).
+
+Версия 0.6.2 исправляет навигацию раздела «Информация о сервере» для модераторов, добавляет единообразные эмодзи к локализованным кнопкам этого подменю и включает завершённое усиление периодического heartbeat-планировщика. См. [примечания к выпуску 0.6.2](docs/RELEASE_NOTES_0.6.2_RU.md).
+
+Версия 0.6.3 была backend-only сборкой ветки исходного кода 0.6.2; схема осталась 6, протокол — 1. См. [примечания к выпуску 0.6.3](docs/RELEASE_NOTES_0.6.3_RU.md).
+
+Версия 0.6.4 добавляет добровольно выбираемые Telegram-теги из принадлежащего пользователю Minecraft-аккаунта, необязательную причину отклонения заявки на регистрацию, точные локализованные ошибки авторизации и структурированную диагностику `RESYNC_PLAYER`. Версия wire-протокола остаётся 1, схема backend обновляется до 7. См. [примечания к выпуску 0.6.4](docs/RELEASE_NOTES_0.6.4_RU.md).
 
 Пароль намеренно хранится открытым текстом только в отдельном локальном JSON-конфиге клиента. Backend и Minecraft-сервер не хранят этот пароль. Нельзя журналировать пароли, API-токены, заголовки Authorization, верификаторы или повторно используемые доказательства.
 
@@ -65,9 +75,9 @@ java -version
 ## Release-артефакты
 
 ```text
-auth-backend/build/distributions/auth-backend-0.5.0.tar.gz
-auth-neoforge-server/build/libs/mctgauth-server-0.5.0.jar
-auth-neoforge-client/build/libs/mctgauth-client-0.5.0.jar
+auth-backend/build/distributions/auth-backend-0.6.4.tar.gz
+auth-neoforge-server/build/libs/mctgauth-server-0.6.4.jar
+auth-neoforge-client/build/libs/mctgauth-client-0.6.4.jar
 ```
 
 ```powershell
@@ -81,6 +91,17 @@ auth-neoforge-client/build/libs/mctgauth-client-0.5.0.jar
 - [Русский индекс](docs/README_RU.md) · [English index](docs/README.md)
 - [Переход с 0.4.x на 0.5.0](docs/MIGRATION_0.4.x_TO_0.5.0_RU.md) · [English](docs/MIGRATION_0.4.x_TO_0.5.0.md)
 - [Примечания к выпуску 0.5.0](docs/RELEASE_NOTES_0.5.0_RU.md) · [English](docs/RELEASE_NOTES_0.5.0.md)
+- [Переход с 0.5.0 на 0.6.0](docs/MIGRATION_0.5.0_TO_0.6.0_RU.md) · [English](docs/MIGRATION_0.5.0_TO_0.6.0.md)
+- [Примечания к выпуску 0.6.0](docs/RELEASE_NOTES_0.6.0_RU.md) · [English](docs/RELEASE_NOTES_0.6.0.md)
+- [Переход с 0.6.0 на 0.6.1](docs/MIGRATION_0.6.0_TO_0.6.1_RU.md) · [English](docs/MIGRATION_0.6.0_TO_0.6.1.md)
+- [Примечания к выпуску 0.6.1](docs/RELEASE_NOTES_0.6.1_RU.md) · [English](docs/RELEASE_NOTES_0.6.1.md)
+- [Переход с 0.6.1 на 0.6.2](docs/MIGRATION_0.6.1_TO_0.6.2_RU.md) · [English](docs/MIGRATION_0.6.1_TO_0.6.2.md)
+- [Примечания к выпуску 0.6.2](docs/RELEASE_NOTES_0.6.2_RU.md) · [English](docs/RELEASE_NOTES_0.6.2.md)
+- [Переход с 0.6.2 на 0.6.3](docs/MIGRATION_0.6.2_TO_0.6.3_RU.md) · [English](docs/MIGRATION_0.6.2_TO_0.6.3.md)
+- [Примечания к выпуску 0.6.3](docs/RELEASE_NOTES_0.6.3_RU.md) · [English](docs/RELEASE_NOTES_0.6.3.md)
+- [Переход с 0.6.3 на 0.6.4](docs/MIGRATION_0.6.3_TO_0.6.4_RU.md) · [English](docs/MIGRATION_0.6.3_TO_0.6.4.md)
+- [Примечания к выпуску 0.6.4](docs/RELEASE_NOTES_0.6.4_RU.md) · [English](docs/RELEASE_NOTES_0.6.4.md)
+- [API телеметрии](docs/api/TELEMETRY_API_RU.md) · [English](docs/api/TELEMETRY_API.md)
 - [Архитектура и ответственность](docs/PROJECT_LOGIC.md)
 - [Модель безопасности](docs/architecture/SECURITY_MODEL.md)
 - [Backend](auth-backend/README_RU.md)

@@ -38,6 +38,8 @@ final class TelegramUpdateRouter {
     private final AccountService accounts;
     private final ModeratorService moderators;
     private final RemoteCommandService commands;
+    private final ServerTelemetryService telemetry;
+    private final TelegramUserModerationService userModeration;
     private final ModeratorPendingActionService pendingModeratorActions;
     private final LocalizationService localization;
     private final LocaleResolver locales;
@@ -61,6 +63,18 @@ final class TelegramUpdateRouter {
             LocalizationService localization,
             LocaleResolver locales,
             ObjectMapper json) {
+        this(telegram, botUsername, adminChatId, howToPlayUrl, features, serverId, registrationTickets,
+                tickets, accounts, moderators, commands, pendingModeratorActions, null, null,
+                localization, locales, json);
+    }
+
+    TelegramUpdateRouter(
+            TelegramClient telegram, String botUsername, long adminChatId, String howToPlayUrl,
+            TelegramFeatureConfig features, String serverId, TicketService registrationTickets,
+            SupportTicketService tickets, AccountService accounts, ModeratorService moderators,
+            RemoteCommandService commands, ModeratorPendingActionService pendingModeratorActions,
+            ServerTelemetryService telemetry, TelegramUserModerationService userModeration,
+            LocalizationService localization, LocaleResolver locales, ObjectMapper json) {
         this.telegram = telegram;
         this.botUsername = botUsername;
         this.adminChatId = adminChatId;
@@ -72,6 +86,8 @@ final class TelegramUpdateRouter {
         this.accounts = accounts;
         this.moderators = moderators;
         this.commands = commands;
+        this.telemetry = telemetry;
+        this.userModeration = userModeration;
         this.pendingModeratorActions = pendingModeratorActions;
         this.localization = localization;
         this.locales = locales;
@@ -82,6 +98,19 @@ final class TelegramUpdateRouter {
     void handle(JsonNode update) throws IOException, InterruptedException {
         if (update.has("message")) handleMessage(update.path("message"));
         else if (update.has("callback_query")) handleCallback(update.path("callback_query"));
+        else if (update.has("chat_member")) handleChatMember(update.path("chat_member"));
+    }
+
+    private void handleChatMember(JsonNode update) {
+        if (!features.memberTagsEnabled()
+                || update.path("chat").path("id").asLong() != features.memberTagsChatId()) return;
+        long telegramId = update.path("new_chat_member").path("user").path("id").asLong();
+        if (telegramId <= 0) return;
+        try {
+            synchronizeChatTagSafely(accounts.chatTagPreference(telegramId));
+        } catch (WorkflowException exception) {
+            if (exception.code() != WorkflowException.Code.NOT_FOUND) throw exception;
+        }
     }
 
     private void handleMessage(JsonNode message) throws IOException, InterruptedException {
@@ -101,6 +130,13 @@ final class TelegramUpdateRouter {
         Optional<BotAction> action = privateChat ? actions.resolve(text) : Optional.empty();
         String parsedCommand = command(text);
         if (text.startsWith("/") && parsedCommand.isEmpty()) return;
+
+        if (userModeration != null && userModeration.isBlocked(telegramId)) {
+            sessions.remove(telegramId);
+            pendingModeratorActions.clear(telegramId);
+            telegram.sendMessage(chatId, t(locale, MessageKey.BOT_ACCESS_RESTRICTED), null);
+            return;
+        }
 
         if (adminGroup) {
             if ("/menu".equals(parsedCommand) || "/adm".equals(parsedCommand)
@@ -217,28 +253,26 @@ final class TelegramUpdateRouter {
             return true;
         }
         if (action == BotAction.ABOUT || action == BotAction.HOW_TO_PLAY) {
-            sessions.remove(telegramId);
-            List<String[]> buttons = new ArrayList<>();
-            if (howToPlayUrl != null && howToPlayUrl.startsWith("https://")) {
-                buttons.add(new String[]{t(locale, MessageKey.HOW_TO_PLAY_GUIDE), howToPlayUrl});
-            }
-            buttons.add(new String[]{t(locale, MessageKey.BUTTON_MAIN_MENU), "nav:main"});
-            telegram.sendMessage(chatId, features.howToPlay(locale, t(locale, MessageKey.HOW_TO_PLAY)),
-                    keyboards.inline(buttons.toArray(String[][]::new)));
+            showHowToPlay(chatId, telegramId, locale);
+            return true;
+        }
+        if (action == BotAction.SERVER_INFORMATION) {
+            requireRegistered(telegramId);
+            sessions.put(telegramId, new FlowSession(FlowKind.SERVER_INFORMATION));
+            telegram.sendMessage(chatId, t(locale, MessageKey.SERVER_INFORMATION_TITLE),
+                    keyboards.serverInformationMenu(locale));
+            return true;
+        }
+        if (action == BotAction.SERVER_STATUS && features.serverStatusEnabled()) {
+            showServerStatus(chatId, locale);
             return true;
         }
         if (action == BotAction.SERVER_MAP && features.serverMapUrl() != null) {
-            telegram.sendMessage(chatId, t(locale, MessageKey.SERVER_MAP_OPEN),
-                    keyboards.inline(new String[][]{
-                            {t(locale, MessageKey.MENU_SERVER_MAP), features.serverMapUrl()},
-                            {t(locale, MessageKey.BUTTON_MAIN_MENU), "nav:main"}}));
+            showServerMap(chatId, locale);
             return true;
         }
         if (action == BotAction.MODPACK_DOWNLOAD && features.modpackDownloadUrl() != null) {
-            telegram.sendMessage(chatId, t(locale, MessageKey.MODPACK_DOWNLOAD_OPEN),
-                    keyboards.inline(new String[][]{
-                            {t(locale, MessageKey.MENU_MODPACK_DOWNLOAD), features.modpackDownloadUrl()},
-                            {t(locale, MessageKey.BUTTON_MAIN_MENU), "nav:main"}}));
+            showModpackDownload(chatId, locale);
             return true;
         }
         if (action == BotAction.REPORT_PROBLEM) {
@@ -261,7 +295,7 @@ final class TelegramUpdateRouter {
         }
         if (action == BotAction.SETTINGS) {
             sessions.remove(telegramId);
-            telegram.sendMessage(chatId, t(locale, MessageKey.SETTINGS_TITLE), keyboards.languageSelector(locale));
+            telegram.sendMessage(chatId, t(locale, MessageKey.SETTINGS_TITLE), keyboards.settingsMenu(locale));
             return true;
         }
         if (action == BotAction.ADD_ACCOUNT) {
@@ -275,6 +309,10 @@ final class TelegramUpdateRouter {
             showPasswordChoices(chatId, telegramId, locale);
             return true;
         }
+        if (action == BotAction.MY_PLAYTIME) {
+            showPlaytimeChoices(chatId, telegramId, locale);
+            return true;
+        }
         return moderators.isEnabled(telegramId)
                 && routeAdminMenu(chatId, telegramId, username, text, command, action, locale);
     }
@@ -283,6 +321,14 @@ final class TelegramUpdateRouter {
             long chatId, long telegramId, String username, String text, String command,
             BotAction action, BotLocale locale) throws IOException, InterruptedException {
         ModeratorIdentity moderator = new ModeratorIdentity(telegramId, username);
+        if (action == BotAction.REQUESTS) {
+            telegram.sendMessage(chatId, t(locale, MessageKey.MENU_REQUESTS), keyboards.requestsMenu(locale));
+            return true;
+        }
+        if (action == BotAction.PLAYER_STATISTICS) {
+            showPlayerStatistics(chatId, moderator, 0, locale);
+            return true;
+        }
         if (action == BotAction.NEW_TICKETS) {
             showAdminTickets(chatId, moderator, TicketStatus.OPEN, null, locale); return true;
         }
@@ -346,6 +392,15 @@ final class TelegramUpdateRouter {
                     keyboards.wizard(locale, true));
             return true;
         }
+        if (action == BotAction.SYNC_MEMBER_TAGS) {
+            moderators.requirePermission(moderator, ModeratorPermission.TELEGRAM_MEMBER_TAG_SYNC);
+            TagSyncStatistics statistics = synchronizeAllChatTags();
+            telegram.sendMessage(chatId, t(locale, MessageKey.CHAT_TAG_SYNC_RESULT,
+                    statistics.processed(), statistics.updated(), statistics.cleared(),
+                    statistics.skippedAdministrators(), statistics.notMembers(), statistics.failed()),
+                    keyboards.serverMenu(locale));
+            return true;
+        }
         return false;
     }
 
@@ -354,6 +409,10 @@ final class TelegramUpdateRouter {
             FlowSession session, BotAction action, BotLocale locale)
             throws IOException, InterruptedException {
         switch (session.kind) {
+            case SERVER_INFORMATION -> {
+                sessions.remove(telegramId);
+                showMainMenu(chatId, telegramId, MessageKey.MAIN_CHOOSE_ACTION);
+            }
             case REG_NICKNAME -> {
                 session.put("nickname", text); session.kind = FlowKind.REG_LICENSE;
                 yesNo(chatId, locale, MessageKey.REG_LICENSE);
@@ -469,6 +528,13 @@ final class TelegramUpdateRouter {
                 showDisableConfirmation(chatId, account, locale);
             }
             case ADMIN_DISABLE_CONFIRM -> throw new LocalizedUiException(MessageKey.ERROR_INVALID_STATE);
+            case ADMIN_BOT_BLOCK_REASON -> {
+                session.put("reason", text);
+                session.kind = FlowKind.ADMIN_BOT_BLOCK_CONFIRM;
+                showBotBlockConfirmation(chatId, Long.parseLong(session.get("targetId")),
+                        session.get("confirmationData"), locale);
+            }
+            case ADMIN_BOT_BLOCK_CONFIRM -> throw new LocalizedUiException(MessageKey.ERROR_INVALID_STATE);
             case RESYNC_ACCOUNT -> {
                 long accountId = Long.parseLong(positiveLong(text));
                 sessions.remove(telegramId);
@@ -492,6 +558,13 @@ final class TelegramUpdateRouter {
                 from.path("language_code").asText(""), locales.defaultUserLocale());
         accounts.touchTelegramUser(telegramId, username, suggestion.code());
         BotLocale locale = chatId == adminChatId ? locales.adminLocale() : locales.userLocale(telegramId);
+        if (userModeration != null && userModeration.isBlocked(telegramId)) {
+            sessions.remove(telegramId);
+            pendingModeratorActions.clear(telegramId);
+            telegram.sendMessage(chatId, t(locale, MessageKey.BOT_ACCESS_RESTRICTED), null);
+            telegram.answerCallback(callbackId, t(locale, MessageKey.BOT_ACCESS_RESTRICTED));
+            return;
+        }
         try {
             if (data.startsWith("locale:set:")) {
                 if (!"private".equals(chatType)) throw new WorkflowException(
@@ -513,15 +586,32 @@ final class TelegramUpdateRouter {
             if (data.startsWith("tickets:page:")) {
                 showMyTickets(chatId, telegramId,
                         Integer.parseInt(data.substring("tickets:page:".length())), locale);
+            } else if (data.startsWith("server_info:")) {
+                handleServerInformationCallback(chatId, telegramId, data, locale);
+            } else if (data.startsWith("chat_tag:")) {
+                handleChatTagCallback(chatId, telegramId, chatType, data, locale);
             } else if (data.startsWith("ticket:")) {
                 handleTicketCallback(callbackId, chatId, messageId, telegramId, username, data, locale);
                 return;
             } else if (data.startsWith("admin-account:")) {
                 handleAdminAccountCallback(callbackId, chatId, telegramId, username, chatType, data, locale);
                 return;
+            } else if (data.startsWith("admin-user:")) {
+                handleAdminUserCallback(callbackId, chatId, telegramId, username, chatType, data, locale);
+                return;
             } else if (data.startsWith("account:")) {
                 handleAccountCallback(callbackId, chatId, telegramId, data, locale);
                 return;
+            } else if ("server:players".equals(data)) {
+                showPlayerList(chatId, locale);
+            } else if (data.startsWith("players:stats:")) {
+                requireModerator(telegramId);
+                showPlayerStatistics(chatId, new ModeratorIdentity(telegramId, username),
+                        Integer.parseInt(data.substring("players:stats:".length())), locale);
+            } else if ("nav:requests".equals(data)) {
+                requireModerator(telegramId);
+                telegram.sendMessage(chatId, t(locale, MessageKey.MENU_REQUESTS),
+                        chatId == adminChatId ? keyboards.requestsInlineMenu(locale) : keyboards.requestsMenu(locale));
             } else if (data.startsWith("admin:list:")) {
                 requireModerator(telegramId);
                 String[] parts = data.split(":");
@@ -635,16 +725,27 @@ final class TelegramUpdateRouter {
                             keyboards.wizard(moderatorLocale, true));
                 }
                 case "resolve" -> {
-                    tickets.transition(ticketId, moderator, TicketStatus.RESOLVED);
-                    TicketDetail detail = tickets.ticketForModerator(moderator, ticketId);
-                    BotLocale userLocale = locales.userLocale(detail.ticket().creatorTelegramId());
-                    telegram.sendMessage(detail.ticket().creatorTelegramId(),
-                            t(userLocale, MessageKey.TICKET_RESOLVED_USER, Long.toString(ticketId)), null);
-                    telegram.editMessage(chatId, messageId,
-                            t(locale, MessageKey.TICKET_ADMIN_TERMINAL,
-                                    Long.toString(ticketId), ticketStatus(locale, TicketStatus.RESOLVED)));
+                    showClosureChoice(chatId, ticketId, TicketStatus.RESOLVED, locale);
                 }
-                case "reject" -> rejectTicket(chatId, messageId, ticketId, moderator, locale);
+                case "close" -> showClosureChoice(chatId, ticketId, TicketStatus.CLOSED, locale);
+                case "resolve_comment" -> beginClosureComment(
+                        telegramId, moderator, ticketId, TicketStatus.RESOLVED, locale);
+                case "close_comment" -> beginClosureComment(
+                        telegramId, moderator, ticketId, TicketStatus.CLOSED, locale);
+                case "resolve_now" -> finishTicketClosure(
+                        chatId, messageId, ticketId, moderator, TicketStatus.RESOLVED, null, locale);
+                case "close_now" -> finishTicketClosure(
+                        chatId, messageId, ticketId, moderator, TicketStatus.CLOSED, null, locale);
+                case "closure_cancel" -> {
+                    pendingModeratorActions.clear(telegramId);
+                    showAdminTicket(chatId, moderator, ticketId, locale);
+                }
+                case "reject" -> beginRejectionChoice(chatId, messageId, ticketId, moderator, locale);
+                case "reject_reason" -> beginRegistrationRejectionReason(
+                        chatId, moderator, ticketId, locale);
+                case "reject_now" -> rejectTicket(
+                        chatId, messageId, ticketId, moderator, locale, "");
+                case "reject_cancel" -> showAdminTicket(chatId, moderator, ticketId, locale);
                 case "approve" -> approveTicket(chatId, messageId, ticketId, moderator, locale);
                 default -> throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
             }
@@ -673,12 +774,208 @@ final class TelegramUpdateRouter {
             try (CredentialIssueResult result = accounts.changePassword(telegramId, accountId)) {
                 sendCredential(chatId, result, locale);
             }
+        } else if ("playtime".equals(parts[2])) {
+            showPlaytime(chatId, telegramId, accountId, locale);
         } else if ("cancel".equals(parts[2])) {
             showAccount(chatId, telegramId, locale);
         } else {
             throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
         }
         telegram.answerCallback(callbackId, t(locale, MessageKey.CALLBACK_DONE));
+    }
+
+    private void handleChatTagCallback(
+            long chatId, long telegramId, String chatType, String data, BotLocale locale)
+            throws IOException, InterruptedException {
+        if (!"private".equals(chatType)) {
+            throw new WorkflowException(WorkflowException.Code.UNAUTHORIZED, "Private chat required");
+        }
+        if (!features.memberTagsEnabled()) {
+            telegram.sendMessage(chatId, t(locale, MessageKey.CHAT_TAG_UNAVAILABLE), keyboards.settingsMenu(locale));
+            return;
+        }
+        if ("chat_tag:open".equals(data)) {
+            showChatTagChoices(chatId, telegramId, locale);
+            return;
+        }
+        if ("chat_tag:none".equals(data)) {
+            ChatTagPreference preference = accounts.selectChatTag(telegramId, null);
+            synchronizeChatTagSafely(preference);
+            telegram.sendMessage(chatId, t(locale, MessageKey.CHAT_TAG_SAVED,
+                    t(locale, MessageKey.CHAT_TAG_NO_TAG)), keyboards.settingsMenu(locale));
+            return;
+        }
+        if (data.startsWith("chat_tag:account:")) {
+            long accountId = Long.parseLong(data.substring("chat_tag:account:".length()));
+            ChatTagPreference preference = accounts.selectChatTag(telegramId, accountId);
+            synchronizeChatTagSafely(preference);
+            telegram.sendMessage(chatId, t(locale, MessageKey.CHAT_TAG_SAVED,
+                    preference.minecraftName()), keyboards.settingsMenu(locale));
+            return;
+        }
+        throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
+    }
+
+    private void showChatTagChoices(long chatId, long telegramId, BotLocale locale)
+            throws IOException, InterruptedException {
+        List<String[]> buttons = new ArrayList<>();
+        accounts.accountsFor(telegramId).stream().filter(AccountView::enabled).forEach(account ->
+                buttons.add(new String[]{account.nickname(), "chat_tag:account:" + account.id()}));
+        buttons.add(new String[]{t(locale, MessageKey.CHAT_TAG_NO_TAG), "chat_tag:none"});
+        buttons.add(new String[]{t(locale, MessageKey.BUTTON_BACK), "nav:main"});
+        telegram.sendMessage(chatId, t(locale, MessageKey.CHAT_TAG_TITLE),
+                keyboards.inline(buttons.toArray(String[][]::new)));
+    }
+
+    private void beginRejectionChoice(
+            long chatId, long messageId, long ticketId, ModeratorIdentity moderator, BotLocale locale)
+            throws IOException, InterruptedException {
+        TicketDetail detail = tickets.ticketForModerator(moderator, ticketId);
+        if (detail.ticket().type() != TicketType.REGISTRATION) {
+            rejectTicket(chatId, messageId, ticketId, moderator, locale, "");
+            return;
+        }
+        telegram.sendMessage(chatId, t(locale, MessageKey.TICKET_REJECTION_QUESTION),
+                keyboards.inline(new String[][]{
+                        {t(locale, MessageKey.BUTTON_ADD_REASON), "ticket:" + ticketId + ":reject_reason"},
+                        {t(locale, MessageKey.BUTTON_REJECT_WITHOUT_REASON),
+                                "ticket:" + ticketId + ":reject_now"},
+                        {t(locale, MessageKey.BUTTON_CANCEL), "ticket:" + ticketId + ":reject_cancel"}
+                }));
+    }
+
+    private void beginRegistrationRejectionReason(
+            long moderatorChatId, ModeratorIdentity moderator, long ticketId, BotLocale locale)
+            throws IOException, InterruptedException {
+        pendingModeratorActions.beginRegistrationRejectionReason(moderator, ticketId);
+        sessions.remove(moderator.telegramId());
+        BotLocale moderatorLocale = locales.userLocale(moderator.telegramId());
+        telegram.sendMessage(moderator.telegramId(),
+                t(moderatorLocale, MessageKey.TICKET_REJECTION_REASON_PROMPT, Long.toString(ticketId)),
+                keyboards.wizard(moderatorLocale, true));
+        if (moderatorChatId != moderator.telegramId()) {
+            telegram.sendMessage(moderatorChatId,
+                    t(locale, MessageKey.TICKET_REJECTION_REASON_PROMPT, Long.toString(ticketId)), null);
+        }
+    }
+
+    private TagSyncOutcome synchronizeChatTagSafely(ChatTagPreference preference) {
+        if (!features.memberTagsEnabled()) return TagSyncOutcome.FAILED;
+        try {
+            TelegramChatMember member = telegram.getChatMember(
+                    features.memberTagsChatId(), preference.telegramUserId());
+            if (!member.isMember()) return TagSyncOutcome.NOT_MEMBER;
+            if (member.isAdministrator()) {
+                return TagSyncOutcome.SKIPPED_ADMINISTRATOR;
+            }
+            String desired = preference.hasTag() ? preference.minecraftName() : "";
+            if (desired.equals(member.tag())) return TagSyncOutcome.UNCHANGED;
+            telegram.setChatMemberTag(features.memberTagsChatId(), preference.telegramUserId(), desired);
+            return desired.isEmpty() ? TagSyncOutcome.CLEARED : TagSyncOutcome.UPDATED;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            System.err.println("Telegram member tag synchronization interrupted");
+            return TagSyncOutcome.FAILED;
+        } catch (IOException | RuntimeException exception) {
+            System.err.println("Telegram member tag synchronization failed ("
+                    + exception.getClass().getSimpleName() + ")");
+            return TagSyncOutcome.FAILED;
+        }
+    }
+
+    private TagSyncStatistics synchronizeAllChatTags() {
+        int processed = 0;
+        int updated = 0;
+        int cleared = 0;
+        int skippedAdministrators = 0;
+        int notMembers = 0;
+        int failed = 0;
+        for (ChatTagPreference preference : accounts.chatTagPreferences()) {
+            processed++;
+            switch (synchronizeChatTagSafely(preference)) {
+                case UPDATED -> updated++;
+                case CLEARED -> cleared++;
+                case SKIPPED_ADMINISTRATOR -> skippedAdministrators++;
+                case NOT_MEMBER -> notMembers++;
+                case FAILED -> failed++;
+                case UNCHANGED -> { }
+            }
+        }
+        return new TagSyncStatistics(processed, updated, cleared, skippedAdministrators, notMembers, failed);
+    }
+
+    private void showClosureChoice(
+            long chatId, long ticketId, TicketStatus target, BotLocale locale)
+            throws IOException, InterruptedException {
+        String prefix = target == TicketStatus.CLOSED ? "close" : "resolve";
+        telegram.sendMessage(chatId, t(locale, MessageKey.TICKET_CLOSURE_QUESTION),
+                keyboards.inline(new String[][]{
+                        {t(locale, MessageKey.BUTTON_ADD_COMMENT),
+                                "ticket:" + ticketId + ":" + prefix + "_comment"},
+                        {t(locale, MessageKey.BUTTON_CLOSE_WITHOUT_COMMENT),
+                                "ticket:" + ticketId + ":" + prefix + "_now"},
+                        {t(locale, MessageKey.BUTTON_CANCEL),
+                                "ticket:" + ticketId + ":closure_cancel"}
+                }));
+    }
+
+    private void beginClosureComment(
+            long moderatorChatId, ModeratorIdentity moderator, long ticketId,
+            TicketStatus target, BotLocale locale) throws IOException, InterruptedException {
+        try {
+            pendingModeratorActions.beginClosureComment(moderator, ticketId, target);
+        } catch (WorkflowException exception) {
+            if (exception.code() == WorkflowException.Code.INVALID_STATE) {
+                telegram.sendMessage(moderatorChatId, t(locale, MessageKey.TICKET_ALREADY_CLOSED),
+                        keyboards.inline(new String[][]{
+                                {t(locale, MessageKey.BUTTON_REFRESH), "ticket:" + ticketId + ":refresh"},
+                                {t(locale, MessageKey.BUTTON_ADMIN_MENU), "nav:admin"}
+                        }));
+                return;
+            }
+            throw exception;
+        }
+        sessions.remove(moderator.telegramId());
+        BotLocale moderatorLocale = locales.userLocale(moderator.telegramId());
+        telegram.sendMessage(moderator.telegramId(),
+                t(moderatorLocale, MessageKey.TICKET_CLOSURE_COMMENT_PROMPT, Long.toString(ticketId)),
+                keyboards.wizard(moderatorLocale, true));
+        if (moderatorChatId != moderator.telegramId()) {
+            telegram.sendMessage(moderatorChatId,
+                    t(locale, MessageKey.TICKET_CLOSURE_COMMENT_PROMPT, Long.toString(ticketId)), null);
+        }
+    }
+
+    private void finishTicketClosure(
+            long chatId, long messageId, long ticketId, ModeratorIdentity moderator,
+            TicketStatus target, String comment, BotLocale locale)
+            throws IOException, InterruptedException {
+        try {
+            tickets.closeWithOptionalComment(ticketId, moderator, target, comment);
+        } catch (WorkflowException exception) {
+            if (exception.code() == WorkflowException.Code.INVALID_STATE) {
+                telegram.sendMessage(chatId, t(locale, MessageKey.TICKET_ALREADY_CLOSED),
+                        keyboards.inline(new String[][]{
+                                {t(locale, MessageKey.BUTTON_REFRESH), "ticket:" + ticketId + ":refresh"},
+                                {t(locale, MessageKey.BUTTON_ADMIN_MENU), "nav:admin"}
+                        }));
+                return;
+            }
+            throw exception;
+        }
+        TicketDetail detail = tickets.ticketForModerator(moderator, ticketId);
+        BotLocale userLocale = locales.userLocale(detail.ticket().creatorTelegramId());
+        MessageKey notification = comment == null || comment.isBlank()
+                ? MessageKey.TICKET_CLOSED_USER : MessageKey.TICKET_CLOSED_USER_WITH_COMMENT;
+        telegram.sendMessage(detail.ticket().creatorTelegramId(),
+                comment == null || comment.isBlank()
+                        ? t(userLocale, notification) : t(userLocale, notification, comment), null);
+        if (messageId > 0) {
+            telegram.editMessage(chatId, messageId,
+                    t(locale, MessageKey.TICKET_ADMIN_TERMINAL,
+                            Long.toString(ticketId), ticketStatus(locale, target)));
+        }
+        showAdminTicket(chatId, moderator, ticketId, locale);
     }
 
     private void handleAdminAccountCallback(
@@ -722,13 +1019,103 @@ final class TelegramUpdateRouter {
                 FlowSession session = requireDisableSession(telegramId, accountId);
                 AccountStateChangeResult result = accounts.disable(moderator, accountId, session.get("reason"));
                 sessions.remove(telegramId);
+                if (result.changed()) {
+                    synchronizeChatTagSafely(accounts.chatTagPreference(result.account().ownerTelegramId()));
+                }
                 sendAccountStateResult(chatId, result, false, locale);
             }
             case "enable" -> sendAccountStateResult(chatId,
                     accounts.enable(moderator, accountId, ""), true, locale);
+            case "bot_block" -> {
+                AccountView account = accounts.accountForModerator(moderator, accountId);
+                FlowSession session = new FlowSession(FlowKind.ADMIN_BOT_BLOCK_REASON);
+                session.put("targetId", account.ownerTelegramId());
+                session.put("confirmationData", "admin-account:" + accountId + ":bot_block_confirm");
+                session.put("reason", "");
+                sessions.put(telegramId, session);
+                telegram.sendMessage(chatId, t(locale, MessageKey.BOT_BLOCK_REASON), keyboards.inline(new String[][]{
+                        {t(locale, MessageKey.BUTTON_SKIP), "admin-account:" + accountId + ":bot_block_skip"},
+                        {t(locale, MessageKey.BUTTON_CANCEL), "admin-account:" + accountId + ":view"}}));
+            }
+            case "bot_block_skip" -> {
+                AccountView account = accounts.accountForModerator(moderator, accountId);
+                FlowSession session = requireBotBlockSession(telegramId, account.ownerTelegramId());
+                session.kind = FlowKind.ADMIN_BOT_BLOCK_CONFIRM;
+                showBotBlockConfirmation(chatId, account.ownerTelegramId(),
+                        "admin-account:" + accountId + ":bot_block_confirm", locale);
+            }
+            case "bot_unblock" -> {
+                AccountView account = accounts.accountForModerator(moderator, accountId);
+                telegram.sendMessage(chatId, t(locale, MessageKey.BOT_UNBLOCK_CONFIRM,
+                        Long.toString(account.ownerTelegramId())), keyboards.inline(new String[][]{
+                        {t(locale, MessageKey.BUTTON_CONFIRM), "admin-account:" + accountId + ":bot_unblock_confirm"},
+                        {t(locale, MessageKey.BUTTON_CANCEL), "admin-account:" + accountId + ":view"}}));
+            }
+            case "bot_block_confirm", "bot_unblock_confirm" -> {
+                AccountView account = accounts.accountForModerator(moderator, accountId);
+                boolean blocked = "bot_block_confirm".equals(parts[2]);
+                String reason = blocked
+                        ? requireBotBlockSession(telegramId, account.ownerTelegramId()).get("reason") : "";
+                TelegramUserModerationService.ChangeResult result = userModeration.setBlocked(
+                        moderator, account.ownerTelegramId(), blocked, reason);
+                sessions.remove(telegramId);
+                telegram.sendMessage(chatId, t(locale, blocked ? MessageKey.BOT_BLOCKED_DONE
+                        : MessageKey.BOT_UNBLOCKED_DONE, Long.toString(result.targetTelegramId())),
+                        accountAdminKeyboard(account, locale));
+            }
             case "disable_cancel" -> {
                 sessions.remove(telegramId);
                 showAdminAccount(chatId, moderator, accountId, locale);
+            }
+            default -> throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
+        }
+        telegram.answerCallback(callbackId, t(locale, MessageKey.CALLBACK_DONE));
+    }
+
+    private void handleAdminUserCallback(
+            String callbackId, long chatId, long telegramId, String username, String chatType,
+            String data, BotLocale locale) throws IOException, InterruptedException {
+        requireModerator(telegramId);
+        String[] parts = data.split(":");
+        if (parts.length != 3) throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
+        long targetId = Long.parseLong(parts[1]);
+        ModeratorIdentity moderator = new ModeratorIdentity(telegramId, username);
+        long promptChat = "private".equals(chatType) ? chatId : telegramId;
+        BotLocale promptLocale = "private".equals(chatType) ? locale : locales.userLocale(telegramId);
+        switch (parts[2]) {
+            case "bot_block" -> {
+                FlowSession session = new FlowSession(FlowKind.ADMIN_BOT_BLOCK_REASON);
+                session.put("targetId", targetId);
+                session.put("confirmationData", "admin-user:" + targetId + ":bot_block_confirm");
+                session.put("reason", "");
+                sessions.put(telegramId, session);
+                telegram.sendMessage(promptChat, t(promptLocale, MessageKey.BOT_BLOCK_REASON),
+                        keyboards.inline(new String[][]{
+                                {t(promptLocale, MessageKey.BUTTON_SKIP),
+                                        "admin-user:" + targetId + ":bot_block_skip"},
+                                {t(promptLocale, MessageKey.BUTTON_CANCEL), "nav:admin"}}));
+            }
+            case "bot_block_skip" -> {
+                FlowSession session = requireBotBlockSession(telegramId, targetId);
+                session.kind = FlowKind.ADMIN_BOT_BLOCK_CONFIRM;
+                showBotBlockConfirmation(promptChat, targetId,
+                        "admin-user:" + targetId + ":bot_block_confirm", promptLocale);
+            }
+            case "bot_unblock" -> telegram.sendMessage(promptChat,
+                    t(promptLocale, MessageKey.BOT_UNBLOCK_CONFIRM, Long.toString(targetId)),
+                    keyboards.inline(new String[][]{
+                            {t(promptLocale, MessageKey.BUTTON_CONFIRM),
+                                    "admin-user:" + targetId + ":bot_unblock_confirm"},
+                            {t(promptLocale, MessageKey.BUTTON_CANCEL), "nav:admin"}}));
+            case "bot_block_confirm", "bot_unblock_confirm" -> {
+                boolean blocked = "bot_block_confirm".equals(parts[2]);
+                String reason = blocked ? requireBotBlockSession(telegramId, targetId).get("reason") : "";
+                TelegramUserModerationService.ChangeResult result = userModeration.setBlocked(
+                        moderator, targetId, blocked, reason);
+                sessions.remove(telegramId);
+                telegram.sendMessage(promptChat, t(promptLocale, blocked ? MessageKey.BOT_BLOCKED_DONE
+                                : MessageKey.BOT_UNBLOCKED_DONE, Long.toString(result.targetTelegramId())),
+                        keyboards.adminMenu(promptLocale));
             }
             default -> throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
         }
@@ -743,6 +1130,25 @@ final class TelegramUpdateRouter {
             throw new LocalizedUiException(MessageKey.ERROR_INVALID_STATE);
         }
         return session;
+    }
+
+    private FlowSession requireBotBlockSession(long telegramId, long targetTelegramId) {
+        FlowSession session = sessions.get(telegramId);
+        if (session == null || (session.kind != FlowKind.ADMIN_BOT_BLOCK_REASON
+                && session.kind != FlowKind.ADMIN_BOT_BLOCK_CONFIRM)
+                || !Long.toString(targetTelegramId).equals(session.get("targetId"))) {
+            throw new LocalizedUiException(MessageKey.ERROR_INVALID_STATE);
+        }
+        return session;
+    }
+
+    private void showBotBlockConfirmation(long chatId, long targetTelegramId,
+                                          String confirmationData, BotLocale locale)
+            throws IOException, InterruptedException {
+        telegram.sendMessage(chatId, t(locale, MessageKey.BOT_BLOCK_CONFIRM,
+                Long.toString(targetTelegramId)), keyboards.inline(new String[][]{
+                {t(locale, MessageKey.BUTTON_CONFIRM), confirmationData},
+                {t(locale, MessageKey.BUTTON_CANCEL), "nav:admin"}}));
     }
 
     private void showDisableConfirmation(long chatId, AccountView account, BotLocale locale)
@@ -790,9 +1196,8 @@ final class TelegramUpdateRouter {
             char[] password = result.copyInitialPassword();
             try {
                 BotLocale userLocale = locales.userLocale(result.creatorTelegramId());
-                telegram.sendMessage(result.creatorTelegramId(),
-                        t(userLocale, MessageKey.TICKET_APPROVED_USER,
-                                result.nickname(), new String(password)), null);
+                telegram.sendHtmlMessage(result.creatorTelegramId(), passwordMessage(userLocale,
+                        MessageKey.TICKET_APPROVED_USER, new String(password), result.nickname()), null);
             } finally {
                 Arrays.fill(password, '\0');
             }
@@ -805,10 +1210,19 @@ final class TelegramUpdateRouter {
     private void rejectTicket(
             long chatId, long messageId, long ticketId, ModeratorIdentity moderator, BotLocale adminLocale)
             throws IOException, InterruptedException {
+        rejectTicket(chatId, messageId, ticketId, moderator, adminLocale, "");
+    }
+
+    private void rejectTicket(
+            long chatId, long messageId, long ticketId, ModeratorIdentity moderator,
+            BotLocale adminLocale, String reason) throws IOException, InterruptedException {
         TicketDetail detail = tickets.ticketForModerator(moderator, ticketId);
         if (detail.ticket().type() == TicketType.REGISTRATION) {
-            try (TicketDecisionResult result = registrationTickets.rejectRegistration(ticketId, moderator, "")) {
-                if (result.outcome() == TicketDecisionResult.Outcome.ALREADY_DECIDED) return;
+            try (TicketDecisionResult result = registrationTickets.rejectRegistration(ticketId, moderator, reason)) {
+                if (result.outcome() == TicketDecisionResult.Outcome.ALREADY_DECIDED) {
+                    throw new WorkflowException(WorkflowException.Code.INVALID_STATE,
+                            "Registration request was already processed");
+                }
             }
         } else if (detail.ticket().type() == TicketType.ADD_MINECRAFT_ACCOUNT) {
             try (TicketDecisionResult result = tickets.rejectAddAccount(ticketId, moderator)) {
@@ -819,7 +1233,9 @@ final class TelegramUpdateRouter {
         }
         BotLocale userLocale = locales.userLocale(detail.ticket().creatorTelegramId());
         telegram.sendMessage(detail.ticket().creatorTelegramId(),
-                t(userLocale, MessageKey.TICKET_REJECTED_USER, Long.toString(ticketId)), null);
+                reason == null || reason.isBlank()
+                        ? t(userLocale, MessageKey.TICKET_REJECTED_USER, Long.toString(ticketId))
+                        : t(userLocale, MessageKey.TICKET_REJECTED_USER_WITH_REASON, reason), null);
         telegram.editMessage(chatId, messageId,
                 t(adminLocale, MessageKey.TICKET_ADMIN_TERMINAL,
                         Long.toString(ticketId), ticketStatus(adminLocale, TicketStatus.REJECTED)));
@@ -992,9 +1408,8 @@ final class TelegramUpdateRouter {
             char[] password = result.copyPassword();
             try {
                 BotLocale ownerLocale = locales.userLocale(ownerId);
-                telegram.sendMessage(ownerId,
-                        t(ownerLocale, MessageKey.CREDENTIAL_CREATED,
-                                result.nickname(), new String(password)), null);
+                telegram.sendHtmlMessage(ownerId, passwordMessage(ownerLocale,
+                        MessageKey.CREDENTIAL_CREATED, new String(password), result.nickname()), null);
             } finally {
                 Arrays.fill(password, '\0');
             }
@@ -1031,7 +1446,8 @@ final class TelegramUpdateRouter {
         FlowSession session = sessions.get(telegramId);
         return session != null && switch (session.kind) {
             case MANUAL_OWNER, MANUAL_NICKNAME, MANUAL_LICENSE, MANUAL_CONFIRM,
-                    ADMIN_SEARCH, ADMIN_DISABLE_REASON, ADMIN_DISABLE_CONFIRM, RESYNC_ACCOUNT -> true;
+                    ADMIN_SEARCH, ADMIN_DISABLE_REASON, ADMIN_DISABLE_CONFIRM,
+                    ADMIN_BOT_BLOCK_REASON, ADMIN_BOT_BLOCK_CONFIRM, RESYNC_ACCOUNT -> true;
             default -> false;
         };
     }
@@ -1040,11 +1456,24 @@ final class TelegramUpdateRouter {
             long chatId, long telegramId, String username, String text,
             ModeratorPendingAction pending, BotLocale locale) throws IOException, InterruptedException {
         requireModerator(telegramId);
+        ModeratorIdentity moderator = new ModeratorIdentity(telegramId, username);
+        if (pending.type() == ModeratorPendingAction.Type.REGISTRATION_REJECTION_REASON) {
+            if (text.isBlank()) throw new LocalizedUiException(MessageKey.TICKET_COMMENT_REQUIRED);
+            rejectTicket(chatId, 0, pending.ticketId(), moderator, locale, text);
+            pendingModeratorActions.clear(telegramId);
+            return;
+        }
+        if (pending.type() == ModeratorPendingAction.Type.TICKET_CLOSURE_COMMENT) {
+            if (text.isBlank()) throw new LocalizedUiException(MessageKey.TICKET_COMMENT_REQUIRED);
+            finishTicketClosure(chatId, 0, pending.ticketId(), moderator,
+                    pending.targetStatus(), text, locale);
+            pendingModeratorActions.clear(telegramId);
+            return;
+        }
         if (pending.type() != ModeratorPendingAction.Type.REPLY_TO_TICKET) {
             pendingModeratorActions.clear(telegramId);
             throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
         }
-        ModeratorIdentity moderator = new ModeratorIdentity(telegramId, username);
         tickets.moderatorReply(pending.ticketId(), moderator, text);
         pendingModeratorActions.clear(telegramId);
         TicketDetail detail = tickets.ticketForModerator(moderator, pending.ticketId());
@@ -1099,11 +1528,67 @@ final class TelegramUpdateRouter {
             case MANUAL_LICENSE -> { session.kind = FlowKind.MANUAL_NICKNAME;
                 telegram.sendMessage(chatId, t(locale, MessageKey.MANUAL_NICKNAME), keyboards.wizard(locale, true)); }
             case MANUAL_CONFIRM -> { session.kind = FlowKind.MANUAL_LICENSE; yesNoAdmin(chatId, locale, MessageKey.MANUAL_LICENSE); }
+            case SERVER_INFORMATION -> {
+                sessions.remove(telegramId);
+                showMainMenu(chatId, telegramId, MessageKey.MAIN_CHOOSE_ACTION);
+            }
             default -> {
                 sessions.remove(telegramId);
                 showRelevantMenu(chatId, telegramId, MessageKey.MAIN_CHOOSE_ACTION);
             }
         }
+    }
+
+    private void handleServerInformationCallback(long chatId, long telegramId, String data, BotLocale locale)
+            throws IOException, InterruptedException {
+        requireRegistered(telegramId);
+        switch (data) {
+            case "server_info:how_to_play" -> showHowToPlay(chatId, telegramId, locale);
+            case "server_info:modpack" -> {
+                if (features.modpackDownloadUrl() == null) throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
+                showModpackDownload(chatId, locale);
+            }
+            case "server_info:map" -> {
+                if (features.serverMapUrl() == null) throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
+                showServerMap(chatId, locale);
+            }
+            case "server_info:status" -> {
+                if (!features.serverStatusEnabled()) throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
+                showServerStatus(chatId, locale);
+            }
+            case "server_info:back" -> {
+                sessions.remove(telegramId);
+                pendingModeratorActions.clear(telegramId);
+                showMainMenu(chatId, telegramId, MessageKey.MAIN_CHOOSE_ACTION);
+            }
+            default -> throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
+        }
+    }
+
+    private void showHowToPlay(long chatId, long telegramId, BotLocale locale)
+            throws IOException, InterruptedException {
+        sessions.remove(telegramId);
+        List<String[]> buttons = new ArrayList<>();
+        if (howToPlayUrl != null && howToPlayUrl.startsWith("https://")) {
+            buttons.add(new String[]{t(locale, MessageKey.HOW_TO_PLAY_GUIDE), howToPlayUrl});
+        }
+        buttons.add(new String[]{t(locale, MessageKey.BUTTON_MAIN_MENU), "nav:main"});
+        telegram.sendMessage(chatId, features.howToPlay(locale, t(locale, MessageKey.HOW_TO_PLAY)),
+                keyboards.inline(buttons.toArray(String[][]::new)));
+    }
+
+    private void showServerMap(long chatId, BotLocale locale) throws IOException, InterruptedException {
+        telegram.sendMessage(chatId, t(locale, MessageKey.SERVER_MAP_OPEN),
+                keyboards.inline(new String[][]{
+                        {t(locale, MessageKey.MENU_SERVER_MAP), features.serverMapUrl()},
+                        {t(locale, MessageKey.BUTTON_MAIN_MENU), "nav:main"}}));
+    }
+
+    private void showModpackDownload(long chatId, BotLocale locale) throws IOException, InterruptedException {
+        telegram.sendMessage(chatId, t(locale, MessageKey.MODPACK_DOWNLOAD_OPEN),
+                keyboards.inline(new String[][]{
+                        {t(locale, MessageKey.MENU_MODPACK_DOWNLOAD), features.modpackDownloadUrl()},
+                        {t(locale, MessageKey.BUTTON_MAIN_MENU), "nav:main"}}));
     }
 
     private void showAccount(long chatId, long telegramId, BotLocale locale)
@@ -1128,6 +1613,98 @@ final class TelegramUpdateRouter {
         buttons.add(new String[]{t(locale, MessageKey.BUTTON_MAIN_MENU), "nav:main"});
         telegram.sendMessage(chatId, t(locale, MessageKey.ACCOUNT_SELECT_PASSWORD),
                 keyboards.inline(buttons.toArray(String[][]::new)));
+    }
+
+    private void showPlaytimeChoices(long chatId, long telegramId, BotLocale locale)
+            throws IOException, InterruptedException {
+        List<AccountView> owned = requireRegistered(telegramId);
+        if (owned.size() == 1) {
+            showPlaytime(chatId, telegramId, owned.getFirst().id(), locale);
+            return;
+        }
+        List<String[]> buttons = new ArrayList<>();
+        for (AccountView account : owned) {
+            buttons.add(new String[]{account.nickname(), "account:" + account.id() + ":playtime"});
+        }
+        buttons.add(new String[]{t(locale, MessageKey.BUTTON_BACK), "nav:main"});
+        telegram.sendMessage(chatId, t(locale, MessageKey.PLAYTIME_SELECT),
+                keyboards.inline(buttons.toArray(String[][]::new)));
+    }
+
+    private void showPlaytime(long chatId, long telegramId, long accountId, BotLocale locale)
+            throws IOException, InterruptedException {
+        if (telemetry == null) throw new LocalizedUiException(MessageKey.ERROR_INVALID_STATE);
+        ServerTelemetryService.Playtime value = telemetry.playtime(telegramId, accountId);
+        telegram.sendMessage(chatId, t(locale, MessageKey.PLAYTIME_SUMMARY, value.nickname(),
+                LocalizedDurationFormatter.format(value.last24Hours(), locale),
+                LocalizedDurationFormatter.format(value.last7Days(), locale),
+                LocalizedDurationFormatter.format(value.allTime(), locale)), keyboards.inline(new String[][]{
+                {t(locale, MessageKey.BUTTON_BACK), "nav:main"}}));
+    }
+
+    private void showServerStatus(long chatId, BotLocale locale) throws IOException, InterruptedException {
+        if (telemetry == null) throw new LocalizedUiException(MessageKey.ERROR_INVALID_STATE);
+        ServerTelemetryService.ServerStatus status = telemetry.status(serverId);
+        String text;
+        if (status.online()) {
+            text = t(locale, MessageKey.SERVER_STATUS_ONLINE,
+                    Integer.toString(status.onlinePlayers()), Integer.toString(status.maxPlayers()));
+            if (!features.showPlayerCount()) text = text.lines().findFirst().orElse(text);
+        } else {
+            String updated = status.lastHeartbeatAt() == null ? "—"
+                    : localization.formatInstant(locale, status.lastHeartbeatAt());
+            text = t(locale, MessageKey.SERVER_STATUS_OFFLINE, updated);
+        }
+        List<String[]> buttons = new ArrayList<>();
+        if (status.online() && features.showPlayerList()) {
+            buttons.add(new String[]{t(locale, MessageKey.BUTTON_PLAYER_LIST), "server:players"});
+        }
+        buttons.add(new String[]{t(locale, MessageKey.BUTTON_BACK), "nav:main"});
+        telegram.sendMessage(chatId, text, keyboards.inline(buttons.toArray(String[][]::new)));
+    }
+
+    private void showPlayerList(long chatId, BotLocale locale) throws IOException, InterruptedException {
+        if (telemetry == null) throw new LocalizedUiException(MessageKey.ERROR_INVALID_STATE);
+        ServerTelemetryService.ServerStatus status = telemetry.status(serverId);
+        if (!status.online()) { showServerStatus(chatId, locale); return; }
+        List<ServerTelemetryService.OnlinePlayer> players = telemetry.onlinePlayers(serverId);
+        MessageKey heading = players.isEmpty() && status.onlinePlayers() > 0
+                ? MessageKey.PLAYER_LIST_UNAVAILABLE
+                : players.isEmpty() ? MessageKey.PLAYER_LIST_EMPTY : MessageKey.PLAYER_LIST_TITLE;
+        StringBuilder text = new StringBuilder(t(locale, heading));
+        if (!players.isEmpty()) for (ServerTelemetryService.OnlinePlayer player : players) {
+            String duration = features.showSessionDuration()
+                    ? LocalizedDurationFormatter.format(player.sessionDuration(), locale) : "";
+            text.append('\n').append(t(locale, MessageKey.PLAYER_LIST_ROW,
+                    player.nickname(), duration).stripTrailing());
+        }
+        telegram.sendMessage(chatId, text.toString(), keyboards.inline(new String[][]{
+                {t(locale, MessageKey.BUTTON_BACK), "nav:main"}}));
+    }
+
+    private void showPlayerStatistics(long chatId, ModeratorIdentity moderator, int page, BotLocale locale)
+            throws IOException, InterruptedException {
+        if (telemetry == null) throw new LocalizedUiException(MessageKey.ERROR_INVALID_STATE);
+        List<ServerTelemetryService.PlayerStatistic> values = telemetry.playerStatistics(
+                moderator, moderators, page, 10);
+        StringBuilder text = new StringBuilder(t(locale, MessageKey.PLAYER_STATISTICS_TITLE,
+                Integer.toString(page + 1)));
+        for (ServerTelemetryService.PlayerStatistic value : values) {
+            String seen;
+            if (value.online()) seen = t(locale, MessageKey.PLAYER_ONLINE);
+            else if (value.lastSeen() == null) seen = "—";
+            else seen = localization.formatInstant(locale, value.lastSeen()) + " ("
+                    + LocalizedDurationFormatter.format(java.time.Duration.between(
+                    value.lastSeen(), telemetry.currentTime()), locale)
+                    + (locale == BotLocale.RUSSIAN ? " назад)" : " ago)");
+            text.append("\n\n").append(t(locale, MessageKey.PLAYER_STATISTICS_ROW,
+                    value.nickname(), LocalizedDurationFormatter.format(value.allTime(), locale), seen));
+        }
+        List<String[]> buttons = new ArrayList<>();
+        if (page > 0) buttons.add(new String[]{t(locale, MessageKey.BUTTON_PREVIOUS), "players:stats:" + (page - 1)});
+        if (values.size() == 10) buttons.add(new String[]{t(locale, MessageKey.BUTTON_NEXT), "players:stats:" + (page + 1)});
+        buttons.add(new String[]{t(locale, MessageKey.BUTTON_ADMIN_MENU), "nav:admin"});
+        telegram.sendMessage(chatId, text.toString(), keyboards.inline(buttons.toArray(String[][]::new)));
     }
 
     private void showMyTickets(long chatId, long telegramId, int requestedPage, BotLocale locale)
@@ -1274,13 +1851,18 @@ final class TelegramUpdateRouter {
     }
 
     private ObjectNode accountAdminKeyboard(AccountView account, BotLocale locale) {
-        return keyboards.inline(new String[][]{
-                {t(locale, account.enabled() ? MessageKey.BUTTON_DISABLE_ACCOUNT
-                                : MessageKey.BUTTON_ENABLE_ACCOUNT),
-                        "admin-account:" + account.id() + (account.enabled() ? ":disable" : ":enable")},
-                {t(locale, MessageKey.BUTTON_BACK), "nav:admin"},
-                {t(locale, MessageKey.BUTTON_MAIN_MENU), "nav:main"}
-        });
+        List<String[]> buttons = new ArrayList<>();
+        buttons.add(new String[]{t(locale, account.enabled() ? MessageKey.BUTTON_DISABLE_ACCOUNT
+                        : MessageKey.BUTTON_ENABLE_ACCOUNT),
+                "admin-account:" + account.id() + (account.enabled() ? ":disable" : ":enable")});
+        if (userModeration != null) {
+            boolean blocked = userModeration.isBlocked(account.ownerTelegramId());
+            buttons.add(new String[]{t(locale, blocked ? MessageKey.BUTTON_UNBLOCK_USER : MessageKey.BUTTON_BLOCK_USER),
+                    "admin-account:" + account.id() + (blocked ? ":bot_unblock" : ":bot_block")});
+        }
+        buttons.add(new String[]{t(locale, MessageKey.BUTTON_BACK), "nav:admin"});
+        buttons.add(new String[]{t(locale, MessageKey.BUTTON_MAIN_MENU), "nav:main"});
+        return keyboards.inline(buttons.toArray(String[][]::new));
     }
 
     private void postSupportTicket(long ticketId, long ownerId)
@@ -1320,6 +1902,16 @@ final class TelegramUpdateRouter {
             }
             buttons.add(new String[]{t(locale, MessageKey.BUTTON_REJECT),
                     "ticket:" + ticketId + ":reject"});
+        } else if ((ticket.status() == TicketStatus.RESOLVED || ticket.status() == TicketStatus.REJECTED)
+                && Objects.equals(ticket.assignedModeratorId(), viewerModeratorId)) {
+            buttons.add(new String[]{t(locale, MessageKey.BUTTON_CLOSE),
+                    "ticket:" + ticketId + ":close"});
+        }
+        if (userModeration != null) {
+            boolean blocked = userModeration.isBlocked(ticket.creatorTelegramId());
+            buttons.add(new String[]{t(locale, blocked ? MessageKey.BUTTON_UNBLOCK_USER : MessageKey.BUTTON_BLOCK_USER),
+                    "admin-user:" + ticket.creatorTelegramId()
+                            + (blocked ? ":bot_unblock" : ":bot_block")});
         }
         buttons.add(new String[]{t(locale, MessageKey.BUTTON_REFRESH),
                 "ticket:" + ticketId + ":refresh"});
@@ -1345,12 +1937,25 @@ final class TelegramUpdateRouter {
             throws IOException, InterruptedException {
         char[] password = result.copyPassword();
         try {
-            telegram.sendMessage(chatId, t(locale, MessageKey.PASSWORD_CHANGED,
-                    result.nickname(), new String(password),
+            telegram.sendHtmlMessage(chatId, passwordMessage(locale, MessageKey.PASSWORD_CHANGED,
+                    new String(password), result.nickname(),
                     Integer.toString(result.credentialVersion())), null);
         } finally {
             Arrays.fill(password, '\0');
         }
+    }
+
+    private String passwordMessage(BotLocale locale, MessageKey key, String password, Object... otherArguments) {
+        Object[] arguments = new Object[otherArguments.length + 1];
+        if (key == MessageKey.PASSWORD_CHANGED) {
+            arguments[0] = otherArguments[0];
+            arguments[1] = TelegramPasswordFormatter.marker();
+            arguments[2] = otherArguments[1];
+        } else {
+            arguments[0] = otherArguments[0];
+            arguments[1] = TelegramPasswordFormatter.marker();
+        }
+        return TelegramPasswordFormatter.format(t(locale, key, arguments), password);
     }
 
     private void yesNo(long chatId, BotLocale locale, MessageKey prompt, Object... arguments)
@@ -1566,6 +2171,13 @@ final class TelegramUpdateRouter {
         return null;
     }
 
+    private enum TagSyncOutcome {
+        UPDATED, CLEARED, UNCHANGED, SKIPPED_ADMINISTRATOR, NOT_MEMBER, FAILED
+    }
+
+    private record TagSyncStatistics(
+            int processed, int updated, int cleared, int skippedAdministrators, int notMembers, int failed) { }
+
     private String command(String text) {
         if (text == null || !text.startsWith("/")) return "";
         String first = text.split("\\s+", 2)[0];
@@ -1581,7 +2193,8 @@ final class TelegramUpdateRouter {
         VIOLATION_DESCRIPTION, VIOLATION_ATTACHMENTS,
         ADD_NICKNAME, ADD_LICENSE, ADD_CONFIRM,
         MANUAL_OWNER, MANUAL_NICKNAME, MANUAL_LICENSE, MANUAL_CONFIRM,
-        USER_REPLY, ADMIN_SEARCH, ADMIN_DISABLE_REASON, ADMIN_DISABLE_CONFIRM, RESYNC_ACCOUNT
+        USER_REPLY, ADMIN_SEARCH, ADMIN_DISABLE_REASON, ADMIN_DISABLE_CONFIRM,
+        ADMIN_BOT_BLOCK_REASON, ADMIN_BOT_BLOCK_CONFIRM, RESYNC_ACCOUNT, SERVER_INFORMATION
     }
 
     private static final class FlowSession {

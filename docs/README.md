@@ -2,7 +2,7 @@
 
 [Русская версия](README_RU.md) · [Project home](../README.md)
 
-This index separates operator-facing guides from design references. The current release targets Java 21, Minecraft 1.21.1, NeoForge 21.1.244, and MCTGAuth 0.5.0.
+This index separates operator-facing guides from design references. The current release targets Java 21, Minecraft 1.21.1, NeoForge 21.1.244, and MCTGAuth 0.6.4.
 
 ## Start here
 
@@ -12,8 +12,17 @@ This index separates operator-facing guides from design references. The current 
 - [MCTGAuth Client](../auth-neoforge-client/README.md)
 - [Production deployment and operations](deployment/DEPLOYMENT.md)
 - [Troubleshooting](troubleshooting/TROUBLESHOOTING.md)
-- [0.5.0 release notes](RELEASE_NOTES_0.5.0.md)
-- [Upgrade from 0.4.x to 0.5.0](MIGRATION_0.4.x_TO_0.5.0.md)
+- [0.6.0 release notes](RELEASE_NOTES_0.6.0.md)
+- [Upgrade from 0.5.0 to 0.6.0](MIGRATION_0.5.0_TO_0.6.0.md)
+- [0.6.1 release notes](RELEASE_NOTES_0.6.1.md)
+- [Upgrade from 0.6.0 to 0.6.1](MIGRATION_0.6.0_TO_0.6.1.md)
+- [0.6.2 release notes](RELEASE_NOTES_0.6.2.md)
+- [Upgrade from 0.6.1 to 0.6.2](MIGRATION_0.6.1_TO_0.6.2.md)
+- [0.6.3 release notes](RELEASE_NOTES_0.6.3.md)
+- [Upgrade from 0.6.2 to 0.6.3](MIGRATION_0.6.2_TO_0.6.3.md)
+- [0.6.4 release notes](RELEASE_NOTES_0.6.4.md)
+- [Upgrade from 0.6.3 to 0.6.4](MIGRATION_0.6.3_TO_0.6.4.md)
+- [Telemetry API](api/TELEMETRY_API.md)
 - [0.4.2 release notes](RELEASE_NOTES_0.4.2.md)
 
 ## Architecture and security
@@ -40,4 +49,4 @@ This index separates operator-facing guides from design references. The current 
 - [VPS toolkit technical notes](deployment/VPS_MANAGEMENT.md) describe layout and transaction details.
 - [Server deployment](NEOFORGE_SERVER_DEPLOYMENT.md) and [client installation](NEOFORGE_CLIENT_INSTALLATION.md) remain focused supplements.
 
-Planned or unsupported behavior is labeled explicitly. In particular, per-player resync and safe live configuration reload are not currently operational.
+Planned or unsupported behavior is labeled explicitly. In particular, `RESYNC_PLAYER` now returns structured diagnostics and requests an immediate poll, but the sync API still has no single-account snapshot operation; safe live configuration reload is also not currently operational.

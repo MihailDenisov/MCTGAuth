@@ -56,7 +56,8 @@ public final class LoginSessionManager implements AutoCloseable {
     public Decision hello(UUID connectionId, ClientHelloPayload hello) {
         PlayerAuthSession session = sessions.get(connectionId);
         if (session == null || session.state() != PlayerAuthState.WAITING_FOR_CLIENT) {
-            return Decision.failure(null, AuthFailureReason.INTERNAL_AUTH_ERROR, false, 0);
+            return Decision.failure(null, session == null ? AuthFailureReason.INVALID_SESSION
+                    : AuthFailureReason.INVALID_CHALLENGE, false, 0);
         }
         if (hello.protocolVersion() != AuthProtocol.AUTH_PROTOCOL_VERSION
                 || (hello.featureBits() & AuthProtocol.REQUIRED_FEATURES) != AuthProtocol.REQUIRED_FEATURES) {
@@ -68,10 +69,10 @@ public final class LoginSessionManager implements AutoCloseable {
 
     public Decision verify(UUID connectionId, AuthResponsePayload response) {
         PlayerAuthSession session = sessions.get(connectionId);
-        if (session == null) return Decision.failure(null, AuthFailureReason.INTERNAL_AUTH_ERROR, false, 0);
+        if (session == null) return Decision.failure(null, AuthFailureReason.INVALID_SESSION, false, 0);
         synchronized (session) {
             if (session.state() != PlayerAuthState.CHALLENGE_SENT) {
-                return Decision.failure(response.sessionId(), AuthFailureReason.INTERNAL_AUTH_ERROR, false, 0);
+                return Decision.failure(response.sessionId(), AuthFailureReason.REPLAY_DETECTED, false, 0);
             }
             Instant expiresAt = session.expiresAt();
             UUID expectedSessionId = session.sessionId();
@@ -85,9 +86,9 @@ public final class LoginSessionManager implements AutoCloseable {
             }
             CredentialCheck check = store.withAccountByMinecraftName(session.normalizedIdentity(), account -> {
                 if (!account.enabled()) return CredentialCheck.DISABLED;
-                if (!Objects.equals(expectedSessionId, response.sessionId())
-                        || challengedVersion != response.credentialVersion()
-                        || account.credentialVersion() != challengedVersion) return CredentialCheck.INVALID;
+                if (!Objects.equals(expectedSessionId, response.sessionId())) return CredentialCheck.INVALID_CHALLENGE;
+                if (challengedVersion != response.credentialVersion()
+                        || account.credentialVersion() != challengedVersion) return CredentialCheck.OUTDATED;
                 try (Argon2Verifier verifier = Argon2Verifier.parse(account.credentialVerifier())) {
                     byte[] key = verifier.derivedKey();
                     try {
@@ -101,7 +102,7 @@ public final class LoginSessionManager implements AutoCloseable {
                 } catch (IllegalArgumentException exception) {
                     return CredentialCheck.CORRUPT;
                 }
-            }).orElse(CredentialCheck.INVALID);
+            }).orElse(CredentialCheck.NOT_FOUND);
             if (check == CredentialCheck.DISABLED) {
                 if (nonce != null) Arrays.fill(nonce, (byte) 0);
                 session.fail();
@@ -113,6 +114,24 @@ public final class LoginSessionManager implements AutoCloseable {
                 session.fail();
                 failures.increment();
                 return Decision.failure(expectedSessionId, AuthFailureReason.INTERNAL_AUTH_ERROR, false, 0);
+            }
+            if (check == CredentialCheck.NOT_FOUND) {
+                if (nonce != null) Arrays.fill(nonce, (byte) 0);
+                session.fail();
+                failures.increment();
+                return Decision.failure(expectedSessionId, AuthFailureReason.ACCOUNT_NOT_FOUND, false, 0);
+            }
+            if (check == CredentialCheck.OUTDATED) {
+                if (nonce != null) Arrays.fill(nonce, (byte) 0);
+                session.fail();
+                failures.increment();
+                return Decision.failure(expectedSessionId, AuthFailureReason.CREDENTIAL_OUTDATED, false, 0);
+            }
+            if (check == CredentialCheck.INVALID_CHALLENGE) {
+                if (nonce != null) Arrays.fill(nonce, (byte) 0);
+                session.fail();
+                failures.increment();
+                return Decision.failure(expectedSessionId, AuthFailureReason.INVALID_CHALLENGE, false, 0);
             }
             if (nonce != null) Arrays.fill(nonce, (byte) 0);
             if (check != CredentialCheck.VALID) return failedAttempt(session, expectedSessionId, AuthFailureReason.INVALID_CREDENTIALS);
@@ -139,7 +158,7 @@ public final class LoginSessionManager implements AutoCloseable {
         if (account.isEmpty()) {
             session.fail();
             failures.increment();
-            return Decision.failure(null, AuthFailureReason.ACCOUNT_NOT_SYNCHRONIZED, false, 0);
+            return Decision.failure(null, AuthFailureReason.ACCOUNT_NOT_FOUND, false, 0);
         }
         if (!account.get().enabled()) {
             session.fail();
@@ -171,6 +190,14 @@ public final class LoginSessionManager implements AutoCloseable {
 
     public Optional<PlayerAuthSession> session(UUID connectionId) {
         return Optional.ofNullable(sessions.get(connectionId));
+    }
+
+    public Optional<String> connectedMinecraftName(UUID minecraftUuid) {
+        if (minecraftUuid == null) return Optional.empty();
+        return sessions.values().stream()
+                .filter(session -> minecraftUuid.equals(session.minecraftUuid()))
+                .map(PlayerAuthSession::minecraftName)
+                .findFirst();
     }
 
     public void disconnected(UUID connectionId) {
@@ -212,5 +239,7 @@ public final class LoginSessionManager implements AutoCloseable {
         }
     }
 
-    private enum CredentialCheck { VALID, INVALID, DISABLED, CORRUPT }
+    private enum CredentialCheck {
+        VALID, INVALID, DISABLED, CORRUPT, NOT_FOUND, OUTDATED, INVALID_CHALLENGE
+    }
 }

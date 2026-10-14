@@ -7,5 +7,7 @@ public record TicketMessageView(
         String senderType,
         Long senderTelegramId,
         String text,
+        String messageType,
+        String visibility,
         Instant createdAt) {
 }

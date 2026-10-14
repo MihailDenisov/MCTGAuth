@@ -26,6 +26,7 @@ public final class SupportTicketService {
     public static final int PAGE_SIZE = 5;
     private static final int MAX_DESCRIPTION = 4_000;
     private static final int MAX_MESSAGE = 4_000;
+    public static final int MAX_CLOSURE_COMMENT = 4_000;
     private static final int MAX_ATTACHMENTS = 10;
 
     private final BackendDatabase database;
@@ -275,6 +276,10 @@ public final class SupportTicketService {
     }
 
     public void transition(long ticketId, ModeratorIdentity moderator, TicketStatus target) {
+        if (target == TicketStatus.RESOLVED || target == TicketStatus.CLOSED) {
+            closeWithOptionalComment(ticketId, moderator, target, null);
+            return;
+        }
         database.transaction(connection -> {
             ModeratorPermission permission = target == TicketStatus.REJECTED
                     ? ModeratorPermission.TICKET_REJECT : ModeratorPermission.TICKET_RESOLVE;
@@ -289,6 +294,38 @@ public final class SupportTicketService {
             audit.record(connection, target == TicketStatus.REJECTED ? "TICKET_REJECTED" : "TICKET_RESOLVED",
                     ticketId, ticket.affectedAccountId(), moderator.telegramId(),
                     moderator.usernameSnapshot(), now, Map.of("from", ticket.status().name(), "to", target.name()));
+            return null;
+        });
+    }
+
+    public void closeWithOptionalComment(
+            long ticketId, ModeratorIdentity moderator, TicketStatus target, String closingComment) {
+        if (target != TicketStatus.RESOLVED && target != TicketStatus.CLOSED) {
+            throw invalid("Closing target must be RESOLVED or CLOSED");
+        }
+        String normalizedComment = optionalText(closingComment, MAX_CLOSURE_COMMENT, "Closing comment");
+        String comment = normalizedComment.isEmpty() ? null : normalizedComment;
+        database.transaction(connection -> {
+            moderators.requirePermission(connection, moderator, ModeratorPermission.TICKET_RESOLVE);
+            TicketListItem ticket = loadTicket(connection, ticketId);
+            if (!allowed(ticket.status(), target)) {
+                throw invalidState("Invalid ticket transition: " + ticket.status() + " -> " + target);
+            }
+            if (ticket.assignedModeratorId() != null) requireAssignedModerator(ticket, moderator);
+            Instant now = Instant.now(clock);
+            if (!updateStatus(connection, ticketId, ticket.status(), target, now)) {
+                throw invalidState("Ticket was already changed by another moderator");
+            }
+            if (comment != null) {
+                insertMessage(connection, ticketId, "MODERATOR", moderator.telegramId(), comment,
+                        "CLOSURE_COMMENT", "PUBLIC", now);
+            }
+            audit.record(connection, target == TicketStatus.CLOSED ? "TICKET_CLOSED" : "TICKET_RESOLVED",
+                    ticketId, ticket.affectedAccountId(), moderator.telegramId(),
+                    moderator.usernameSnapshot(), now, Map.of(
+                            "from", ticket.status().name(),
+                            "to", target.name(),
+                            "closingCommentPresent", comment != null));
             return null;
         });
     }
@@ -556,16 +593,25 @@ public final class SupportTicketService {
     private static void insertMessage(
             Connection connection, long ticketId, String senderType, Long senderId, String text, Instant now)
             throws SQLException {
+        insertMessage(connection, ticketId, senderType, senderId, text, "MESSAGE", "PUBLIC", now);
+    }
+
+    private static void insertMessage(
+            Connection connection, long ticketId, String senderType, Long senderId, String text,
+            String messageType, String visibility, Instant now) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO ticket_messages
-                    (ticket_id, sender_type, sender_telegram_id, message_text, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                    (ticket_id, sender_type, sender_telegram_id, message_text,
+                     message_type, visibility, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """)) {
             statement.setLong(1, ticketId);
             statement.setString(2, senderType);
             if (senderId == null) statement.setNull(3, java.sql.Types.BIGINT); else statement.setLong(3, senderId);
             statement.setString(4, text);
-            statement.setString(5, now.toString());
+            statement.setString(5, messageType);
+            statement.setString(6, visibility);
+            statement.setString(7, now.toString());
             statement.executeUpdate();
         }
     }
@@ -584,6 +630,23 @@ public final class SupportTicketService {
             }
             statement.setLong(4, ticketId);
             statement.executeUpdate();
+        }
+    }
+
+    private static boolean updateStatus(
+            Connection connection, long ticketId, TicketStatus expected, TicketStatus status, Instant now)
+            throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                UPDATE tickets SET status = ?, updated_at = ?, closed_at = ?
+                WHERE id = ? AND status = ?
+                """)) {
+            statement.setString(1, status.name());
+            statement.setString(2, now.toString());
+            if (status == TicketStatus.CLOSED) statement.setString(3, now.toString());
+            else statement.setNull(3, java.sql.Types.VARCHAR);
+            statement.setLong(4, ticketId);
+            statement.setString(5, expected.name());
+            return statement.executeUpdate() == 1;
         }
     }
 
@@ -616,15 +679,17 @@ public final class SupportTicketService {
         }
         Map<String, String> fields = loadFields(connection, ticket);
         List<TicketMessageView> messages = new ArrayList<>();
-        try (PreparedStatement statement = connection.prepareStatement("""
-                SELECT * FROM ticket_messages WHERE ticket_id = ? ORDER BY id
-                """)) {
+        String messageQuery = moderator
+                ? "SELECT * FROM ticket_messages WHERE ticket_id = ? ORDER BY id"
+                : "SELECT * FROM ticket_messages WHERE ticket_id = ? AND visibility = 'PUBLIC' ORDER BY id";
+        try (PreparedStatement statement = connection.prepareStatement(messageQuery)) {
             statement.setLong(1, ticketId);
             try (ResultSet result = statement.executeQuery()) {
                 while (result.next()) {
                     long senderId = result.getLong("sender_telegram_id");
                     messages.add(new TicketMessageView(result.getLong("id"), result.getString("sender_type"),
                             result.wasNull() ? null : senderId, result.getString("message_text"),
+                            result.getString("message_type"), result.getString("visibility"),
                             Instant.parse(result.getString("created_at"))));
                 }
             }
