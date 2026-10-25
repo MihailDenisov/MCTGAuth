@@ -4,7 +4,7 @@ Required runtime: Java 21, Minecraft 1.21.1, NeoForge 21.1.244 or a compatible 2
 
 ```text
 server/
-├── mods/mctgauth-server-0.6.4.jar
+├── mods/mctgauth-server-0.6.5.jar
 ├── config/mctgauth-server.toml
 └── mctgauth/
     ├── accounts.json
@@ -13,7 +13,7 @@ server/
 
 Default Pterodactyl workflow:
 
-1. Install `mctgauth-server-0.6.4.jar` in `mods/`.
+1. Install `mctgauth-server-0.6.5.jar` in `mods/`.
 2. Start the server once so NeoForge creates `config/mctgauth-server.toml`.
 3. Stop the server.
 4. Edit `config/mctgauth-server.toml`.

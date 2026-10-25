@@ -5,3 +5,4 @@ V004__telegram_workflow_fixes.sql
 V005__telemetry_and_bot_blocking.sql
 V006__ticket_closure_comments.sql
 V007__chat_tags_and_registration_rejection.sql
+V008__device_fingerprints_and_bans.sql

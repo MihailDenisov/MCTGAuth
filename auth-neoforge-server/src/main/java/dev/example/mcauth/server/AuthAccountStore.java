@@ -25,6 +25,13 @@ public interface AuthAccountStore extends AutoCloseable {
     boolean reserveRemoteCommand(UUID commandId, RemoteCommandType type, Instant processedAt);
     Optional<RemoteCommandRecord> remoteCommand(UUID commandId);
     void completeRemoteCommand(UUID commandId, RemoteCommandStatus status, JsonObject result, Instant processedAt);
+    default void cacheDevice(long deviceId, LocalDeviceFingerprint fingerprint) { }
+    default Optional<Long> resolveCachedDevice(LocalDeviceFingerprint fingerprint) { return Optional.empty(); }
+    default boolean isDeviceBanned(long deviceId) { return false; }
+    default SyncApplyResult applyDeviceBanEvent(UUID eventId, SyncEventType eventType, Instant processedAt,
+                                                long deviceId, boolean banned) {
+        throw new UnsupportedOperationException("Device-ban cache is not supported");
+    }
     Path path();
     @Override void close();
 

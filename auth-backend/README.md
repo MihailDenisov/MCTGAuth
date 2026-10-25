@@ -1,4 +1,4 @@
-# MCTGAuth backend 0.6.4
+# MCTGAuth backend 0.6.5
 
 [Русская версия](README_RU.md)
 
@@ -24,7 +24,13 @@ Java 21 (JDK/JRE), outbound HTTPS to `api.telegram.org`, a BotFather bot, a priv
 | `HTTP_BIND_ADDRESS` | No | `127.0.0.1` | No; must resolve loopback; public bind rejected. |
 | `HTTP_PORT` | No | `8080` | No; 1–65535. |
 | `AUTH_API_TOKEN` | Yes | `<32+ random characters>` | Secret bearer token; 32–512 non-whitespace characters. |
+| `DEVICE_FINGERPRINT_SECRET` | Yes | `<separate 32+ random characters>` | Secret HMAC key for pseudonymous device tokens; never reuse/log/commit. |
 | `SERVER_ID` | Yes | `survival-main` | No; stable 1–64 `[A-Za-z0-9._-]` target. |
+| `DEVICE_FINGERPRINT_ENABLED` | No | `true` | Enables observation/resolution. |
+| `DEVICE_FINGERPRINT_VERSION` | No | `1` | Independent fingerprint format version. |
+| `DEVICE_OBSERVATION_RETENTION_DAYS` | No | `365` | Documented retention target; cleanup is deferred in 0.6.5. |
+| `DEVICE_BAN_ENABLED` | No | `true` | Enforces moderator-created device bans. |
+| `DEVICE_SIGNAL_WEIGHT_<TYPE>` | No | centralized defaults | Weight for an allowlisted signal type. |
 | `ADMIN_LOCALE` | No | `en` or `ru` | No; shared admin-group language; default `en`. |
 | `DEFAULT_USER_LOCALE` | No | `en` or `ru` | No; initial private-chat language; default `en`. |
 
@@ -52,6 +58,7 @@ The embedded server is loopback-only. `/health` and `/version` need no bearer to
 | `GET /version` | `200`; returns application, version, commit, buildTime, schemaVersion only. |
 | `GET /api/v1/server/events?server_id=<id>` | `200`; pending sync events for the configured server. |
 | `POST /api/v1/server/events/<event-id>/ack?server_id=<id>` | `200 acknowledged` or `404 not_found`; repeat-safe acknowledgement. |
+| `POST /api/v1/server/device-observations` | Resolves a validated fingerprint after credential proof and returns opaque device ID, confidence, and allow/user-ban/device-ban decision. |
 | `GET /api/v1/server/commands?server_id=<id>` | `200`; ordered, non-expired typed commands. |
 | `POST /api/v1/server/commands/<command-id>/started?server_id=<id>` | `200 running` or `409 invalid_state`. |
 | `POST /api/v1/server/commands/<command-id>/result?server_id=<id>` | JSON `status` `SUCCESS`/`FAILED`, structured `result`, optional safe `errorMessage`; `200` or `409 invalid_state`. |
@@ -74,7 +81,7 @@ memberTags:
 
 They require Telegram Bot API 9.5+, bot administrator membership, and `can_manage_tags`. A missing/invalid `chatId` safely disables the feature. Users start with No tag and may select only an enabled account they own; the database stores its account ID and resolves the authoritative nickname when synchronizing. Telegram administrators/owners are always excluded in 0.6.4. Non-members and temporary API failures keep the saved preference; target-chat membership updates and the permission-controlled **Synchronize Chat Tags** action provide retry/reconciliation.
 
-Schema 7 adds this nullable preference with `ON DELETE SET NULL` and persisted registration-rejection input state. Registration rejection now supports an optional public reason entered privately by the moderator, limited to 1,000 characters, and committed transactionally with the first successful terminal decision.
+Schema 7 added this nullable preference with `ON DELETE SET NULL` and persisted registration-rejection input state. Schema 8 adds pseudonymous device observations, many-to-many relationships, bans/effects/exemptions, and persisted ban-reason input. Registration rejection supports an optional public reason entered privately by the moderator, limited to 1,000 characters, and committed transactionally with the first successful terminal decision.
 
 ## SQLite, build, and run
 

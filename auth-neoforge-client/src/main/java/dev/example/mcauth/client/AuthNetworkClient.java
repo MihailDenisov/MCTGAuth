@@ -6,6 +6,7 @@ import dev.example.mcauth.protocol.AuthFailureReason;
 import dev.example.mcauth.protocol.AuthProtocol;
 import dev.example.mcauth.protocol.AuthResponsePayload;
 import dev.example.mcauth.protocol.ChallengeProof;
+import dev.example.mcauth.protocol.DeviceFingerprint;
 
 import java.util.Arrays;
 import java.util.Objects;
@@ -17,11 +18,13 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 public final class AuthNetworkClient implements AutoCloseable {
     private final ExecutorService derivationExecutor;
     private final BiConsumer<AuthResponsePayload, Long> sender;
     private final CredentialStore credentials = new CredentialStore();
+    private final Supplier<DeviceFingerprint> fingerprintSupplier;
     private final AtomicReference<ClientAuthState> state = new AtomicReference<>(ClientAuthState.DISCONNECTED);
     private final AtomicLong connectionGeneration = new AtomicLong();
     private volatile AuthChallengePayload challenge;
@@ -32,15 +35,33 @@ public final class AuthNetworkClient implements AutoCloseable {
     private volatile Consumer<AuthFailurePayload> failureListener = ignored -> { };
 
     public AuthNetworkClient(BiConsumer<AuthResponsePayload, Long> sender) {
-        this(sender, Executors.newSingleThreadExecutor(runnable -> {
+        this(sender, () -> new DeviceFingerprint(AuthProtocol.FINGERPRINT_VERSION, java.util.List.of()),
+                Executors.newSingleThreadExecutor(runnable -> {
             Thread thread = new Thread(runnable, "mctgauth-argon2");
             thread.setDaemon(true);
             return thread;
         }));
     }
 
+    public AuthNetworkClient(BiConsumer<AuthResponsePayload, Long> sender,
+                             Supplier<DeviceFingerprint> fingerprintSupplier) {
+        this(sender, fingerprintSupplier, Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "mctgauth-auth-worker");
+            thread.setDaemon(true);
+            return thread;
+        }));
+    }
+
     AuthNetworkClient(BiConsumer<AuthResponsePayload, Long> sender, ExecutorService derivationExecutor) {
+        this(sender, () -> new DeviceFingerprint(AuthProtocol.FINGERPRINT_VERSION, java.util.List.of()),
+                derivationExecutor);
+    }
+
+    AuthNetworkClient(BiConsumer<AuthResponsePayload, Long> sender,
+                      Supplier<DeviceFingerprint> fingerprintSupplier,
+                      ExecutorService derivationExecutor) {
         this.sender = Objects.requireNonNull(sender, "sender");
+        this.fingerprintSupplier = Objects.requireNonNull(fingerprintSupplier, "fingerprintSupplier");
         this.derivationExecutor = Objects.requireNonNull(derivationExecutor, "derivationExecutor");
     }
 
@@ -115,7 +136,8 @@ public final class AuthNetworkClient implements AutoCloseable {
                     current.sessionId(), identity, current.credentialVersion());
             if (capturedGeneration != connectionGeneration.get()
                     || challenge != current || state.get() != ClientAuthState.COMPUTING) return;
-            sender.accept(new AuthResponsePayload(current.sessionId(), current.credentialVersion(), proof),
+            DeviceFingerprint fingerprint = Objects.requireNonNull(fingerprintSupplier.get(), "device fingerprint");
+            sender.accept(new AuthResponsePayload(current.sessionId(), current.credentialVersion(), proof, fingerprint),
                     capturedGeneration);
             if (capturedGeneration == connectionGeneration.get()) {
                 transition(ClientAuthState.WAITING_FOR_RESULT);

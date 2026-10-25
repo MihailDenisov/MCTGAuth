@@ -1,4 +1,4 @@
-# MCTGAuth backend 0.6.4
+# MCTGAuth backend 0.6.5
 
 [English version](README.md)
 
@@ -24,6 +24,7 @@
 | `HTTP_BIND_ADDRESS` | Нет | `127.0.0.1` | Нет; только loopback, публичный bind отклоняется. |
 | `HTTP_PORT` | Нет | `8080` | Нет; от 1 до 65535. |
 | `AUTH_API_TOKEN` | Да | `<32+ случайных символа>` | Bearer-секрет; 32–512 непробельных символов. |
+| `DEVICE_FINGERPRINT_SECRET` | Да | `<отдельные 32+ случайных символа>` | Секрет HMAC для псевдонимных device-токенов; не переиспользовать и не журналировать. |
 | `SERVER_ID` | Да | `survival-main` | Нет; стабильный ID `[A-Za-z0-9._-]`, 1–64 символа. |
 | `ADMIN_LOCALE` | Нет | `en` или `ru` | Язык общей admin-группы; по умолчанию `en`. |
 | `DEFAULT_USER_LOCALE` | Нет | `en` или `ru` | Начальный язык private-чата; по умолчанию `en`. |

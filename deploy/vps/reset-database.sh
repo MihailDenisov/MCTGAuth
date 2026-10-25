@@ -11,6 +11,7 @@ RESET_TABLES=(
     moderator_pending_actions ticket_decisions ticket_messages ticket_attachments
     problem_ticket_data violation_ticket_data add_account_ticket_data password_changes
     telemetry_events player_sessions server_status audit_log remote_commands registration_ticket_data
+    ban_account_effects device_ban_exemptions bans account_devices user_devices device_signals devices
     tickets minecraft_accounts sync_events users
 )
 
@@ -88,6 +89,13 @@ DELETE FROM server_status;
 DELETE FROM audit_log;
 DELETE FROM remote_commands;
 DELETE FROM registration_ticket_data;
+DELETE FROM ban_account_effects;
+DELETE FROM device_ban_exemptions;
+DELETE FROM bans;
+DELETE FROM account_devices;
+DELETE FROM user_devices;
+DELETE FROM device_signals;
+DELETE FROM devices;
 DELETE FROM tickets;
 DELETE FROM minecraft_accounts;
 DELETE FROM sync_events;
@@ -113,7 +121,7 @@ clear_minecraft_cache() {
     temporary="$(mktemp "${cache_dir}/.accounts-reset.XXXXXX")"
     chmod 0600 "${temporary}"
     chown "${owner}:${group}" "${temporary}"
-    printf '%s\n' '{"schemaVersion":1,"accounts":{},"processedEvents":[],"processedRemoteCommands":[]}' \
+    printf '%s\n' '{"schemaVersion":2,"accounts":{},"processedEvents":[],"processedRemoteCommands":[],"devices":[],"bannedDeviceIds":[]}' \
         >"${temporary}"
     mv -f -- "${temporary}" "${cache}"
     rm -f -- "${cache}.bak" "${cache}.tmp" "${cache_dir}/telemetry-events.json" \

@@ -5,6 +5,9 @@ import dev.example.mcauth.protocol.AuthChallengePayload;
 import dev.example.mcauth.protocol.AuthFailurePayload;
 import dev.example.mcauth.protocol.AuthFailureReason;
 import dev.example.mcauth.protocol.AuthResponsePayload;
+import dev.example.mcauth.protocol.DeviceFingerprint;
+import dev.example.mcauth.protocol.DeviceSignal;
+import dev.example.mcauth.protocol.DeviceSignalType;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -15,6 +18,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -148,6 +152,8 @@ class AuthNetworkClientTest {
                 AuthFailureReason.CLIENT_MISSING,
                 AuthFailureReason.TOO_MANY_ATTEMPTS,
                 AuthFailureReason.AUTH_TIMEOUT,
+                AuthFailureReason.DEVICE_BANNED,
+                AuthFailureReason.DEVICE_VERIFICATION_UNAVAILABLE,
                 AuthFailureReason.INTERNAL_AUTH_ERROR
         };
         for (AuthFailureReason reason : terminalReasons) {
@@ -248,6 +254,33 @@ class AuthNetworkClientTest {
         assertEquals(AuthNetworkClient.ChallengeDisposition.IGNORED,
                 client.handleChallenge(challenge(), "stored-password", true));
         assertEquals(ClientAuthState.PASSIVE, client.state());
+        client.close();
+    }
+
+    @Test
+    void fingerprintCollectionRunsOnlyForActivatedAuthenticationWork() throws Exception {
+        ArrayBlockingQueue<AuthResponsePayload> sent = new ArrayBlockingQueue<>(1);
+        AtomicInteger collections = new AtomicInteger();
+        var executor = Executors.newSingleThreadExecutor();
+        AuthNetworkClient client = new AuthNetworkClient((payload, generation) -> sent.add(payload), () -> {
+            collections.incrementAndGet();
+            return new DeviceFingerprint(1, java.util.List.of(
+                    new DeviceSignal(DeviceSignalType.SYSTEM_UUID, new byte[32])));
+        }, executor);
+
+        client.connected("Test_Player");
+        assertEquals(0, collections.get());
+        assertEquals(AuthNetworkClient.ChallengeDisposition.IGNORED,
+                client.handleChallenge(challenge(), "password", true));
+        assertEquals(0, collections.get(), "passive third-party connections must not collect device data");
+
+        assertTrue(client.activate());
+        client.challenge(challenge());
+        assertTrue(client.submit("password".toCharArray()));
+        AuthResponsePayload response = sent.poll(10, TimeUnit.SECONDS);
+        assertNotNull(response);
+        assertEquals(1, collections.get());
+        assertEquals(1, response.deviceFingerprint().signals().size());
         client.close();
     }
 

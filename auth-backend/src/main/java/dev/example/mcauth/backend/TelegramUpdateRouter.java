@@ -40,6 +40,7 @@ final class TelegramUpdateRouter {
     private final RemoteCommandService commands;
     private final ServerTelemetryService telemetry;
     private final TelegramUserModerationService userModeration;
+    private final BanService bans;
     private final ModeratorPendingActionService pendingModeratorActions;
     private final LocalizationService localization;
     private final LocaleResolver locales;
@@ -65,7 +66,7 @@ final class TelegramUpdateRouter {
             ObjectMapper json) {
         this(telegram, botUsername, adminChatId, howToPlayUrl, features, serverId, registrationTickets,
                 tickets, accounts, moderators, commands, pendingModeratorActions, null, null,
-                localization, locales, json);
+                null, localization, locales, json);
     }
 
     TelegramUpdateRouter(
@@ -74,6 +75,19 @@ final class TelegramUpdateRouter {
             SupportTicketService tickets, AccountService accounts, ModeratorService moderators,
             RemoteCommandService commands, ModeratorPendingActionService pendingModeratorActions,
             ServerTelemetryService telemetry, TelegramUserModerationService userModeration,
+            LocalizationService localization, LocaleResolver locales, ObjectMapper json) {
+        this(telegram, botUsername, adminChatId, howToPlayUrl, features, serverId, registrationTickets,
+                tickets, accounts, moderators, commands, pendingModeratorActions, telemetry, userModeration,
+                null, localization, locales, json);
+    }
+
+    TelegramUpdateRouter(
+            TelegramClient telegram, String botUsername, long adminChatId, String howToPlayUrl,
+            TelegramFeatureConfig features, String serverId, TicketService registrationTickets,
+            SupportTicketService tickets, AccountService accounts, ModeratorService moderators,
+            RemoteCommandService commands, ModeratorPendingActionService pendingModeratorActions,
+            ServerTelemetryService telemetry, TelegramUserModerationService userModeration,
+            BanService bans,
             LocalizationService localization, LocaleResolver locales, ObjectMapper json) {
         this.telegram = telegram;
         this.botUsername = botUsername;
@@ -88,6 +102,7 @@ final class TelegramUpdateRouter {
         this.commands = commands;
         this.telemetry = telemetry;
         this.userModeration = userModeration;
+        this.bans = bans;
         this.pendingModeratorActions = pendingModeratorActions;
         this.localization = localization;
         this.locales = locales;
@@ -535,6 +550,8 @@ final class TelegramUpdateRouter {
                         session.get("confirmationData"), locale);
             }
             case ADMIN_BOT_BLOCK_CONFIRM -> throw new LocalizedUiException(MessageKey.ERROR_INVALID_STATE);
+            case ADMIN_USER_BAN_CONFIRM, ADMIN_DEVICE_BAN_CONFIRM ->
+                    throw new LocalizedUiException(MessageKey.ERROR_INVALID_STATE);
             case RESYNC_ACCOUNT -> {
                 long accountId = Long.parseLong(positiveLong(text));
                 sessions.remove(telegramId);
@@ -595,6 +612,12 @@ final class TelegramUpdateRouter {
                 return;
             } else if (data.startsWith("admin-account:")) {
                 handleAdminAccountCallback(callbackId, chatId, telegramId, username, chatType, data, locale);
+                return;
+            } else if (data.startsWith("admin-ban:")) {
+                handleAdminBanCallback(callbackId, chatId, telegramId, username, chatType, data, locale);
+                return;
+            } else if (data.startsWith("admin-device:")) {
+                handleAdminDeviceCallback(callbackId, chatId, telegramId, username, chatType, data, locale);
                 return;
             } else if (data.startsWith("admin-user:")) {
                 handleAdminUserCallback(callbackId, chatId, telegramId, username, chatType, data, locale);
@@ -1122,6 +1145,106 @@ final class TelegramUpdateRouter {
         telegram.answerCallback(callbackId, t(locale, MessageKey.CALLBACK_DONE));
     }
 
+    private void handleAdminBanCallback(String callbackId, long chatId, long telegramId, String username,
+                                        String chatType, String data, BotLocale locale)
+            throws IOException, InterruptedException {
+        if (bans == null || !"private".equals(chatType)) throw new WorkflowException(
+                WorkflowException.Code.UNAUTHORIZED, "Private chat required");
+        requireModerator(telegramId);
+        String[] parts = data.split(":");
+        if (parts.length != 3) throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
+        long targetId = Long.parseLong(parts[1]);
+        ModeratorIdentity moderator = new ModeratorIdentity(telegramId, username);
+        switch (parts[2]) {
+            case "start" -> {
+                pendingModeratorActions.beginUserBanReason(moderator, targetId);
+                telegram.sendMessage(chatId, t(locale, MessageKey.BAN_REASON_PROMPT),
+                        keyboards.wizard(locale, true));
+            }
+            case "only", "linked" -> {
+                FlowSession session = requireBanSession(telegramId, FlowKind.ADMIN_USER_BAN_CONFIRM, targetId);
+                BanService.BanResult result = bans.banUser(moderator, targetId, session.get("reason"),
+                        "linked".equals(parts[2]));
+                sessions.remove(telegramId);
+                telegram.sendMessage(chatId, t(locale, MessageKey.BAN_COMPLETED,
+                        Long.toString(result.originBanId()), Integer.toString(result.linkedBanIds().size()),
+                        Integer.toString(result.affectedAccountCount())), keyboards.adminMenu(locale));
+            }
+            case "unban", "unban_group" -> {
+                Long banId = bans.activeUserBanId(moderator, targetId);
+                if (banId == null) throw new WorkflowException(WorkflowException.Code.NOT_FOUND, "Active ban not found");
+                int removed = bans.unban(moderator, banId, "Moderator Telegram action",
+                        "unban_group".equals(parts[2]));
+                telegram.sendMessage(chatId, t(locale, MessageKey.UNBAN_COMPLETED,
+                        Integer.toString(removed)), keyboards.adminMenu(locale));
+            }
+            case "cancel" -> {
+                sessions.remove(telegramId);
+                telegram.sendMessage(chatId, t(locale, MessageKey.ACTION_CANCELLED), keyboards.adminMenu(locale));
+            }
+            default -> throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
+        }
+        telegram.answerCallback(callbackId, t(locale, MessageKey.CALLBACK_DONE));
+    }
+
+    private void handleAdminDeviceCallback(String callbackId, long chatId, long telegramId, String username,
+                                           String chatType, String data, BotLocale locale)
+            throws IOException, InterruptedException {
+        if (bans == null || !"private".equals(chatType)) throw new WorkflowException(
+                WorkflowException.Code.UNAUTHORIZED, "Private chat required");
+        requireModerator(telegramId);
+        String[] parts = data.split(":");
+        if (parts.length < 3 || parts.length > 4) throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
+        long deviceId = Long.parseLong(parts[1]);
+        ModeratorIdentity moderator = new ModeratorIdentity(telegramId, username);
+        switch (parts[2]) {
+            case "view" -> showAdminDevice(chatId, moderator, deviceId, locale);
+            case "ban" -> {
+                pendingModeratorActions.beginDeviceBanReason(moderator, deviceId);
+                telegram.sendMessage(chatId, t(locale, MessageKey.DEVICE_BAN_REASON_PROMPT,
+                        Long.toString(deviceId)), keyboards.wizard(locale, true));
+            }
+            case "ban_confirm" -> {
+                FlowSession session = requireBanSession(telegramId, FlowKind.ADMIN_DEVICE_BAN_CONFIRM, deviceId);
+                long banId = bans.banDevice(moderator, deviceId, session.get("reason"));
+                sessions.remove(telegramId);
+                telegram.sendMessage(chatId, t(locale, MessageKey.DEVICE_BAN_COMPLETED,
+                        Long.toString(banId)), keyboards.adminMenu(locale));
+            }
+            case "unban" -> {
+                Long banId = bans.activeDeviceBanId(moderator, deviceId);
+                if (banId == null) throw new WorkflowException(WorkflowException.Code.NOT_FOUND, "Active ban not found");
+                bans.unban(moderator, banId, "Moderator Telegram action", false);
+                telegram.sendMessage(chatId, t(locale, MessageKey.DEVICE_UNBAN_COMPLETED),
+                        keyboards.adminMenu(locale));
+            }
+            case "exempt" -> {
+                if (parts.length != 4) throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
+                long userId = Long.parseLong(parts[3]);
+                bans.createExemption(moderator, userId, deviceId, "Confirmed shared-PC exemption");
+                telegram.sendMessage(chatId, t(locale, MessageKey.EXEMPTION_COMPLETED,
+                        Long.toString(userId), Long.toString(deviceId)), keyboards.adminMenu(locale));
+            }
+            case "unexempt" -> {
+                if (parts.length != 4) throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
+                long userId = Long.parseLong(parts[3]);
+                bans.removeExemption(moderator, userId, deviceId, "Moderator Telegram action");
+                telegram.sendMessage(chatId, t(locale, MessageKey.CALLBACK_DONE), keyboards.adminMenu(locale));
+            }
+            default -> throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
+        }
+        telegram.answerCallback(callbackId, t(locale, MessageKey.CALLBACK_DONE));
+    }
+
+    private FlowSession requireBanSession(long moderatorId, FlowKind kind, long targetId) {
+        FlowSession session = sessions.get(moderatorId);
+        if (session == null || session.kind != kind
+                || !Long.toString(targetId).equals(session.get("targetId"))) {
+            throw new LocalizedUiException(MessageKey.ERROR_INVALID_STATE);
+        }
+        return session;
+    }
+
     private FlowSession requireDisableSession(long telegramId, long accountId) {
         FlowSession session = sessions.get(telegramId);
         if (session == null || (session.kind != FlowKind.ADMIN_DISABLE_REASON
@@ -1447,7 +1570,8 @@ final class TelegramUpdateRouter {
         return session != null && switch (session.kind) {
             case MANUAL_OWNER, MANUAL_NICKNAME, MANUAL_LICENSE, MANUAL_CONFIRM,
                     ADMIN_SEARCH, ADMIN_DISABLE_REASON, ADMIN_DISABLE_CONFIRM,
-                    ADMIN_BOT_BLOCK_REASON, ADMIN_BOT_BLOCK_CONFIRM, RESYNC_ACCOUNT -> true;
+                    ADMIN_BOT_BLOCK_REASON, ADMIN_BOT_BLOCK_CONFIRM,
+                    ADMIN_USER_BAN_CONFIRM, ADMIN_DEVICE_BAN_CONFIRM, RESYNC_ACCOUNT -> true;
             default -> false;
         };
     }
@@ -1468,6 +1592,53 @@ final class TelegramUpdateRouter {
             finishTicketClosure(chatId, 0, pending.ticketId(), moderator,
                     pending.targetStatus(), text, locale);
             pendingModeratorActions.clear(telegramId);
+            return;
+        }
+        if (pending.type() == ModeratorPendingAction.Type.USER_BAN_REASON) {
+            if (text.isBlank() || text.length() > 1000 || pending.targetId() == null) {
+                throw new LocalizedUiException(MessageKey.ERROR_INVALID_INPUT);
+            }
+            BanService.BanImpact impact = bans.previewUserBan(moderator, pending.targetId());
+            FlowSession session = new FlowSession(FlowKind.ADMIN_USER_BAN_CONFIRM);
+            session.put("targetId", pending.targetId());
+            session.put("reason", text);
+            sessions.put(telegramId, session);
+            pendingModeratorActions.clear(telegramId);
+            List<String[]> buttons = new ArrayList<>();
+            buttons.add(new String[]{t(locale, MessageKey.BUTTON_BAN_LINKED),
+                    "admin-ban:" + pending.targetId() + ":linked"});
+            buttons.add(new String[]{t(locale, MessageKey.BUTTON_BAN_ONLY),
+                    "admin-ban:" + pending.targetId() + ":only"});
+            for (long deviceId : impact.deviceIds()) buttons.add(new String[]{
+                    t(locale, MessageKey.BUTTON_VIEW_DEVICE) + " #" + deviceId,
+                    "admin-device:" + deviceId + ":view"});
+            buttons.add(new String[]{t(locale, MessageKey.BUTTON_CANCEL),
+                    "admin-ban:" + pending.targetId() + ":cancel"});
+            telegram.sendMessage(chatId, t(locale, MessageKey.BAN_IMPACT,
+                    Long.toString(impact.targetUserId()), text,
+                    Integer.toString(impact.ownAccountCount()), Integer.toString(impact.deviceIds().size()),
+                    Integer.toString(impact.directlyLinkedUserIds().size()),
+                    Integer.toString(impact.linkedAccountCount()),
+                    impact.directlyLinkedUserIds().isEmpty() ? "—" : impact.directlyLinkedUserIds().stream()
+                            .map(String::valueOf).collect(java.util.stream.Collectors.joining(", "))),
+                    keyboards.inline(buttons.toArray(String[][]::new)));
+            return;
+        }
+        if (pending.type() == ModeratorPendingAction.Type.DEVICE_BAN_REASON) {
+            if (text.isBlank() || text.length() > 1000 || pending.targetId() == null) {
+                throw new LocalizedUiException(MessageKey.ERROR_INVALID_INPUT);
+            }
+            FlowSession session = new FlowSession(FlowKind.ADMIN_DEVICE_BAN_CONFIRM);
+            session.put("targetId", pending.targetId());
+            session.put("reason", text);
+            sessions.put(telegramId, session);
+            pendingModeratorActions.clear(telegramId);
+            telegram.sendMessage(chatId, t(locale, MessageKey.DEVICE_BAN_REASON_PROMPT,
+                    Long.toString(pending.targetId())), keyboards.inline(new String[][]{
+                    {t(locale, MessageKey.BUTTON_CONFIRM),
+                            "admin-device:" + pending.targetId() + ":ban_confirm"},
+                    {t(locale, MessageKey.BUTTON_CANCEL),
+                            "admin-device:" + pending.targetId() + ":view"}}));
             return;
         }
         if (pending.type() != ModeratorPendingAction.Type.REPLY_TO_TICKET) {
@@ -1850,6 +2021,32 @@ final class TelegramUpdateRouter {
                 accountAdminKeyboard(account, locale));
     }
 
+    private void showAdminDevice(long chatId, ModeratorIdentity moderator, long deviceId, BotLocale locale)
+            throws IOException, InterruptedException {
+        BanService.DeviceView device = bans.device(moderator, deviceId);
+        List<String[]> buttons = new ArrayList<>();
+        buttons.add(new String[]{t(locale, device.activelyBanned()
+                        ? MessageKey.BUTTON_UNBAN_DEVICE : MessageKey.BUTTON_BAN_DEVICE),
+                "admin-device:" + deviceId + (device.activelyBanned() ? ":unban" : ":ban")});
+        for (long userId : bans.usersForDevice(moderator, deviceId)) {
+            boolean exempt = bans.hasActiveExemption(moderator, userId, deviceId);
+            buttons.add(new String[]{t(locale, exempt ? MessageKey.BUTTON_REMOVE_EXEMPTION
+                            : MessageKey.BUTTON_EXEMPT_USER) + " " + userId,
+                    "admin-device:" + deviceId + (exempt ? ":unexempt:" : ":exempt:") + userId});
+        }
+        for (long accountId : bans.accountsForDevice(moderator, deviceId)) {
+            buttons.add(new String[]{t(locale, MessageKey.BUTTON_VIEW_ACCOUNT) + " #" + accountId,
+                    "admin-account:" + accountId + ":view"});
+        }
+        buttons.add(new String[]{t(locale, MessageKey.BUTTON_BACK), "nav:admin"});
+        telegram.sendMessage(chatId, t(locale, MessageKey.DEVICE_DETAILS,
+                Long.toString(device.id()), Integer.toString(device.fingerprintVersion()),
+                localization.formatInstant(locale, device.firstSeen()),
+                localization.formatInstant(locale, device.lastSeen()), device.confidence().name(),
+                Integer.toString(device.knownUsers()), Integer.toString(device.knownAccounts()),
+                Boolean.toString(device.activelyBanned())), keyboards.inline(buttons.toArray(String[][]::new)));
+    }
+
     private ObjectNode accountAdminKeyboard(AccountView account, BotLocale locale) {
         List<String[]> buttons = new ArrayList<>();
         buttons.add(new String[]{t(locale, account.enabled() ? MessageKey.BUTTON_DISABLE_ACCOUNT
@@ -1859,6 +2056,16 @@ final class TelegramUpdateRouter {
             boolean blocked = userModeration.isBlocked(account.ownerTelegramId());
             buttons.add(new String[]{t(locale, blocked ? MessageKey.BUTTON_UNBLOCK_USER : MessageKey.BUTTON_BLOCK_USER),
                     "admin-account:" + account.id() + (blocked ? ":bot_unblock" : ":bot_block")});
+        }
+        if (bans != null) {
+            boolean banned = bans.isUserBanned(account.ownerTelegramId());
+            buttons.add(new String[]{t(locale, banned ? MessageKey.BUTTON_UNBAN_USER_AUTH
+                            : MessageKey.BUTTON_BAN_USER),
+                    "admin-ban:" + account.ownerTelegramId() + (banned ? ":unban" : ":start")});
+            if (banned) {
+                buttons.add(new String[]{t(locale, MessageKey.BUTTON_UNBAN_GROUP),
+                        "admin-ban:" + account.ownerTelegramId() + ":unban_group"});
+            }
         }
         buttons.add(new String[]{t(locale, MessageKey.BUTTON_BACK), "nav:admin"});
         buttons.add(new String[]{t(locale, MessageKey.BUTTON_MAIN_MENU), "nav:main"});
@@ -2194,7 +2401,8 @@ final class TelegramUpdateRouter {
         ADD_NICKNAME, ADD_LICENSE, ADD_CONFIRM,
         MANUAL_OWNER, MANUAL_NICKNAME, MANUAL_LICENSE, MANUAL_CONFIRM,
         USER_REPLY, ADMIN_SEARCH, ADMIN_DISABLE_REASON, ADMIN_DISABLE_CONFIRM,
-        ADMIN_BOT_BLOCK_REASON, ADMIN_BOT_BLOCK_CONFIRM, RESYNC_ACCOUNT, SERVER_INFORMATION
+        ADMIN_BOT_BLOCK_REASON, ADMIN_BOT_BLOCK_CONFIRM,
+        ADMIN_USER_BAN_CONFIRM, ADMIN_DEVICE_BAN_CONFIRM, RESYNC_ACCOUNT, SERVER_INFORMATION
     }
 
     private static final class FlowSession {

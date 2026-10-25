@@ -32,6 +32,7 @@ public final class BackendHttpServer implements AutoCloseable {
     private final SyncApiService sync;
     private final RemoteCommandService commands;
     private final ServerTelemetryService telemetry;
+    private final DeviceFingerprintService deviceFingerprints;
     private final ExecutorService executor;
     private final BuildInfo buildInfo;
 
@@ -44,13 +45,22 @@ public final class BackendHttpServer implements AutoCloseable {
             SyncApiService sync,
             RemoteCommandService commands,
             ObjectMapper json) throws IOException {
-        this(bindAddress, port, apiToken, database, telegramRunning, sync, commands, null, json);
+        this(bindAddress, port, apiToken, database, telegramRunning, sync, commands, null, null, json);
     }
 
     public BackendHttpServer(
             String bindAddress, int port, String apiToken, BackendDatabase database,
             BooleanSupplier telegramRunning, SyncApiService sync, RemoteCommandService commands,
             ServerTelemetryService telemetry, ObjectMapper json) throws IOException {
+        this(bindAddress, port, apiToken, database, telegramRunning, sync, commands,
+                telemetry, null, json);
+    }
+
+    public BackendHttpServer(
+            String bindAddress, int port, String apiToken, BackendDatabase database,
+            BooleanSupplier telegramRunning, SyncApiService sync, RemoteCommandService commands,
+            ServerTelemetryService telemetry, DeviceFingerprintService deviceFingerprints,
+            ObjectMapper json) throws IOException {
         this.server = HttpServer.create(new InetSocketAddress(bindAddress, port), 50);
         this.json = json;
         this.authentication = new ApiTokenAuthenticator(apiToken);
@@ -59,6 +69,7 @@ public final class BackendHttpServer implements AutoCloseable {
         this.sync = sync;
         this.commands = commands;
         this.telemetry = telemetry;
+        this.deviceFingerprints = deviceFingerprints;
         this.buildInfo = BuildInfo.load();
         server.createContext("/health", this::health);
         server.createContext("/version", this::version);
@@ -67,8 +78,48 @@ public final class BackendHttpServer implements AutoCloseable {
         server.createContext("/api/v1/servers/heartbeat", this::heartbeat);
         server.createContext("/api/v1/servers/player-events", this::playerEvents);
         server.createContext("/api/v1/servers/shutdown", this::shutdown);
+        server.createContext("/api/v1/server/device-observations", this::deviceObservation);
         this.executor = Executors.newVirtualThreadPerTaskExecutor();
         server.setExecutor(executor);
+    }
+
+    private void deviceObservation(HttpExchange exchange) throws IOException {
+        if (!requireAuthentication(exchange)) return;
+        if (deviceFingerprints == null || !"POST".equals(exchange.getRequestMethod())) {
+            respond(exchange, deviceFingerprints == null ? 503 : 405,
+                    error(deviceFingerprints == null ? "unavailable" : "method_not_allowed"));
+            return;
+        }
+        try {
+            JsonNode request = readJson(exchange);
+            JsonNode signalNodes = request.path("signals");
+            if (!signalNodes.isArray() || signalNodes.size() > DeviceFingerprintService.MAX_SIGNALS) {
+                throw new IllegalArgumentException("Invalid signals");
+            }
+            java.util.List<DeviceFingerprintService.ObservedSignal> signals = new java.util.ArrayList<>();
+            for (JsonNode signal : signalNodes) {
+                DeviceFingerprintConfig.SignalType type = DeviceFingerprintConfig.SignalType.valueOf(
+                        requiredText(signal, "type", 32));
+                byte[] digest = java.util.Base64.getDecoder().decode(requiredText(signal, "digest", 64));
+                signals.add(new DeviceFingerprintService.ObservedSignal(type, digest));
+            }
+            DeviceFingerprintService.Resolution resolution = deviceFingerprints.observe(
+                    new DeviceFingerprintService.Observation(
+                            requiredText(request, "serverId", 64), request.path("accountId").asLong(-1),
+                            requiredText(request, "normalizedMinecraftName", 16),
+                            requiredInt(request, "fingerprintVersion"), signals));
+            ObjectNode response = json.createObjectNode();
+            if (resolution.deviceId() != null) response.put("deviceId", resolution.deviceId());
+            response.put("confidence", resolution.confidence().name());
+            response.put("decision", resolution.decision().name());
+            response.put("fingerprintVersion", request.path("fingerprintVersion").asInt());
+            respond(exchange, 200, response);
+        } catch (WorkflowException exception) {
+            respond(exchange, exception.code() == WorkflowException.Code.UNAUTHORIZED ? 403 : 400,
+                    error("request_rejected"));
+        } catch (RuntimeException exception) {
+            respond(exchange, 400, error("invalid_request"));
+        }
     }
 
     private void heartbeat(HttpExchange exchange) throws IOException {

@@ -69,7 +69,7 @@ sudo /opt/minecraft-auth-tools/reset-database.sh
 sudo /opt/minecraft-auth-tools/reset-database.sh --yes
 ```
 
-Без `--yes` требуется точная фраза `RESET ALL AUTH DATA`. Сохраняются схема, `schema_migrations`, `moderators`, `moderator_permissions` и SQLite-последовательности ID. Удаляются пользователи, все заявки/данные типов/сообщения/вложения/решения, аккаунты/ники/verifier/история смены паролей, pending-ввод модераторов, sync events, remote commands и аудит. Сохранение последовательностей исключает совпадение старых Telegram callback с новыми объектами; callback удалённых объектов становится локализованным устаревшим действием.
+Без `--yes` требуется точная фраза `RESET ALL AUTH DATA`. Сохраняются схема, `schema_migrations`, `moderators`, `moderator_permissions` и SQLite-последовательности ID. Удаляются пользователи, заявки, аккаунты/верификаторы, pending-ввод, наблюдения/связи устройств, bans/effects/exemptions, sync events, remote commands и аудит; Minecraft auth cache заменяется пустой schema 2. Сохранение последовательностей исключает совпадение старых Telegram callback с новыми объектами.
 
 До изменений скрипт останавливает Minecraft и backend, создаёт согласованный SQLite backup и `mctgauth-cache-*.tar.gz` в `/var/backups/minecraft-auth`, задавая обоим `0600 root:root`. Затем `<MINECRAFT_GAME_DIR>/mctgauth/accounts.json` заменяется пустым валидным хранилищем, а `.bak`/`.tmp` удаляются: исчезают verifier, processed event ID и command ID. Онлайн-игроки отключаются штатной остановкой Minecraft. Backend с пустой БД никогда не работает одновременно со старым cache.
 

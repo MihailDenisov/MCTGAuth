@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.6.5 - 2026-10-25
+
+### Added
+
+- Versioned client device fingerprints with strong identifiers enabled by default, optional weak GPU/MAC signals, local SHA-256 digests, and backend HMAC tokenization using an external secret.
+- Many-to-many device, Telegram-user, and Minecraft-account history with confidence-based continuity across ordinary hardware changes.
+- Explicit moderator user, direct linked-user, and device bans; impact preview; auditable individual/group unban; shared-PC exemptions; and EN/RU Telegram controls.
+- Offline enforcement for known banned users/devices and an explicit configurable policy for unknown devices during backend outages.
+
+### Changed
+
+- Authentication protocol is now 2 and requires fingerprint capability, preventing legacy clients from bypassing device enforcement.
+- Backend database schema is now 8 through `V008__device_fingerprints_and_bans.sql`.
+- Client and server artifacts must be upgraded together; 0.6.4 clients are intentionally rejected.
+
+### Security and privacy
+
+- Raw hardware identifiers are normalized and hashed locally, never transmitted or stored; backend persistence contains separately keyed HMAC tokens only.
+- Device matches never create a ban automatically. Linked propagation is moderator-confirmed, direct-only, non-recursive, and respects explicit exemptions.
+- Weak signals cannot resolve a device by themselves. GPU and MAC collection remain disabled unless explicitly enabled.
+
 All notable changes to MCTGAuth are documented here. Historical release details remain in `docs/RELEASE_NOTES_*.md`.
 
 ## 0.6.4 - 2026-10-14

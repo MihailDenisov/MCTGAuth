@@ -21,6 +21,11 @@ public final class ServerAuthConfig {
     private static final ModConfigSpec.BooleanValue TELEMETRY_ENABLED;
     private static final ModConfigSpec.IntValue HEARTBEAT_INTERVAL;
     private static final ModConfigSpec.IntValue TELEMETRY_QUEUE_LIMIT;
+    private static final ModConfigSpec.BooleanValue DEVICE_FINGERPRINT_ENABLED;
+    private static final ModConfigSpec.IntValue FINGERPRINT_VERSION;
+    private static final ModConfigSpec.IntValue MIN_STRONG_SIGNALS;
+    private static final ModConfigSpec.BooleanValue DEVICE_BAN_ENABLED;
+    private static final ModConfigSpec.BooleanValue DEVICE_FAIL_CLOSED;
 
     static {
         ModConfigSpec.Builder builder = new ModConfigSpec.Builder();
@@ -48,6 +53,15 @@ public final class ServerAuthConfig {
         TELEMETRY_ENABLED = builder.define("enabled", true);
         HEARTBEAT_INTERVAL = builder.defineInRange("heartbeatIntervalSeconds", 20, 10, 300);
         TELEMETRY_QUEUE_LIMIT = builder.defineInRange("maxQueuedPlayerEvents", 10000, 100, 100000);
+        builder.pop().push("deviceFingerprint");
+        DEVICE_FINGERPRINT_ENABLED = builder.define("enabled", true);
+        FINGERPRINT_VERSION = builder.defineInRange("fingerprintVersion", 1, 1, 1);
+        MIN_STRONG_SIGNALS = builder.defineInRange("minimumStrongSignals", 1, 1, 4);
+        DEVICE_FAIL_CLOSED = builder.comment(
+                "If true, deny an unknown device while the backend is unavailable. False preserves offline login for valid cached accounts.")
+                .define("failClosedWhenBackendUnavailable", false);
+        builder.pop().push("deviceBan");
+        DEVICE_BAN_ENABLED = builder.define("enabled", true);
         builder.pop();
         SPEC = builder.build();
     }
@@ -60,7 +74,8 @@ public final class ServerAuthConfig {
                 Duration.ofSeconds(CONNECT_TIMEOUT.get()), Duration.ofSeconds(REQUEST_TIMEOUT.get()),
                 Duration.ofSeconds(AUTH_TIMEOUT.get()), MAX_ATTEMPTS.get(), BATCH_SIZE.get(), ALLOW_HTTP.get(),
                 DISCONNECT_DISABLED.get(), TELEMETRY_ENABLED.get(), Duration.ofSeconds(HEARTBEAT_INTERVAL.get()),
-                TELEMETRY_QUEUE_LIMIT.get());
+                TELEMETRY_QUEUE_LIMIT.get(), DEVICE_FINGERPRINT_ENABLED.get(), FINGERPRINT_VERSION.get(),
+                MIN_STRONG_SIGNALS.get(), DEVICE_BAN_ENABLED.get(), DEVICE_FAIL_CLOSED.get());
     }
 
     static String configuredApiToken() {
@@ -71,14 +86,27 @@ public final class ServerAuthConfig {
                          Duration requestTimeout, Duration authenticationTimeout, int maxAttempts,
                          int batchSize, boolean allowInsecureHttpForDevelopment,
                          boolean disconnectPlayerWhenAccountDisabled, boolean telemetryEnabled,
-                         Duration heartbeatInterval, int telemetryQueueLimit) {
+                         Duration heartbeatInterval, int telemetryQueueLimit,
+                         boolean deviceFingerprintEnabled, int fingerprintVersion, int minimumStrongSignals,
+                         boolean deviceBanEnabled, boolean failClosedWhenBackendUnavailable) {
+        public Values(URI baseUrl, String serverId, Duration pollInterval, Duration connectTimeout,
+                      Duration requestTimeout, Duration authenticationTimeout, int maxAttempts,
+                      int batchSize, boolean allowInsecureHttpForDevelopment,
+                      boolean disconnectPlayerWhenAccountDisabled, boolean telemetryEnabled,
+                      Duration heartbeatInterval, int telemetryQueueLimit) {
+            this(baseUrl, serverId, pollInterval, connectTimeout, requestTimeout, authenticationTimeout,
+                    maxAttempts, batchSize, allowInsecureHttpForDevelopment,
+                    disconnectPlayerWhenAccountDisabled, telemetryEnabled, heartbeatInterval,
+                    telemetryQueueLimit, true, 1, 1, true, false);
+        }
         public Values(URI baseUrl, String serverId, Duration pollInterval, Duration connectTimeout,
                       Duration requestTimeout, Duration authenticationTimeout, int maxAttempts,
                       int batchSize, boolean allowInsecureHttpForDevelopment,
                       boolean disconnectPlayerWhenAccountDisabled) {
             this(baseUrl, serverId, pollInterval, connectTimeout, requestTimeout, authenticationTimeout,
                     maxAttempts, batchSize, allowInsecureHttpForDevelopment,
-                    disconnectPlayerWhenAccountDisabled, true, Duration.ofSeconds(20), 10000);
+                    disconnectPlayerWhenAccountDisabled, true, Duration.ofSeconds(20), 10000,
+                    true, 1, 1, true, false);
         }
         public Values {
             if (baseUrl == null || serverId == null || !serverId.matches("[A-Za-z0-9._-]{1,64}")) {
@@ -94,6 +122,9 @@ public final class ServerAuthConfig {
             }
             if (telemetryQueueLimit < 100 || telemetryQueueLimit > 100000) {
                 throw new IllegalArgumentException("Invalid telemetry queue limit");
+            }
+            if (fingerprintVersion != 1 || minimumStrongSignals < 1 || minimumStrongSignals > 4) {
+                throw new IllegalArgumentException("Invalid device fingerprint configuration");
             }
             String scheme = baseUrl.getScheme();
             if (!"https".equalsIgnoreCase(scheme)

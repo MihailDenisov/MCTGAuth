@@ -49,6 +49,20 @@ class BackendConfigTest {
         assertEquals(false, exception.getMessage().contains("short-secret"));
     }
 
+    @Test
+    void requiresSeparateDeviceSecretAndRedactsIt() {
+        Map<String, String> environment = validEnvironment();
+        environment.remove("DEVICE_FINGERPRINT_SECRET");
+        assertThrows(IllegalArgumentException.class, () -> BackendConfig.fromEnvironment(environment));
+
+        environment.put("DEVICE_FINGERPRINT_SECRET", "device-secret-that-is-definitely-long-enough");
+        BackendConfig config = BackendConfig.fromEnvironment(environment);
+        assertEquals(false, config.toString().contains("device-secret-that-is-definitely-long-enough"));
+
+        environment.put("DEVICE_FINGERPRINT_SECRET", environment.get("AUTH_API_TOKEN"));
+        assertThrows(IllegalArgumentException.class, () -> BackendConfig.fromEnvironment(environment));
+    }
+
     private static Map<String, String> validEnvironment() {
         Map<String, String> environment = new HashMap<>();
         environment.put("TELEGRAM_BOT_TOKEN", "bot-token-value");
@@ -56,6 +70,7 @@ class BackendConfigTest {
         environment.put("TELEGRAM_ADMIN_CHAT_ID", "-1001234567890");
         environment.put("MODERATOR_TELEGRAM_IDS", "123,456");
         environment.put("AUTH_API_TOKEN", "0123456789abcdef0123456789abcdef");
+        environment.put("DEVICE_FINGERPRINT_SECRET", "abcdef0123456789abcdef0123456789");
         environment.put("SERVER_ID", "survival-main");
         return environment;
     }

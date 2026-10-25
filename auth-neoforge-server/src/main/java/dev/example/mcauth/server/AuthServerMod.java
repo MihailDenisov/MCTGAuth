@@ -11,6 +11,7 @@ import dev.example.mcauth.protocol.ClientHelloPayload;
 import dev.example.mcauth.protocol.PlayerAuthState;
 import dev.example.mcauth.protocol.ServerHelloPayload;
 import dev.example.mcauth.protocol.AuthChallengePayload;
+import dev.example.mcauth.protocol.DeviceFingerprint;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
@@ -68,6 +69,8 @@ public final class AuthServerMod {
     private volatile RemoteCommandPoller remoteCommandPoller;
     private volatile ServerTelemetryService telemetryService;
     private volatile ServerAuthConfig.Values config;
+    private volatile BackendSyncClient backendClient;
+    private volatile DeviceAuthenticationService deviceAuthentication;
 
     public AuthServerMod(IEventBus modBus, ModContainer container) {
         INSTANCE = this;
@@ -148,6 +151,8 @@ public final class AuthServerMod {
                 char[] secret = token.get();
                 try {
                     BackendSyncClient client = new BackendSyncClient(config, secret);
+                    backendClient = client;
+                    deviceAuthentication = new DeviceAuthenticationService(client, store, config);
                     syncWorker = new SyncWorker(client, new SyncEventProcessor(store), backendStatus,
                             Clock.systemUTC(), config.pollInterval(), this::syncApplied);
                     syncWorker.start();
@@ -173,6 +178,9 @@ public final class AuthServerMod {
                 LOGGER.warn("MCTGAuth backend API token is not configured. Backend synchronization is disabled. "
                         + "Local authentication remains available.");
             }
+            if (deviceAuthentication == null) {
+                deviceAuthentication = new DeviceAuthenticationService(store, config);
+            }
             LOGGER.info("MCTGAuth server ready: localSchema={} protocol={}",
                     JsonAuthAccountStore.SCHEMA_VERSION, AuthProtocol.AUTH_PROTOCOL_VERSION);
         } catch (RuntimeException exception) {
@@ -193,6 +201,9 @@ public final class AuthServerMod {
     }
 
     private void stopServices() {
+        DeviceAuthenticationService devices = deviceAuthentication;
+        deviceAuthentication = null;
+        if (devices != null) devices.close();
         ServerTelemetryService telemetry = telemetryService;
         telemetryService = null;
         if (telemetry != null) telemetry.close();
@@ -208,8 +219,47 @@ public final class AuthServerMod {
         AuthAccountStore localStore = store;
         store = null;
         if (localStore != null) localStore.close();
+        BackendSyncClient client = backendClient;
+        backendClient = null;
+        if (client != null) client.close();
         anchors.clear();
         terminalDisconnects.clear();
+    }
+
+    void evaluateDevice(ServerPlayer player, LoginSessionManager.Decision decision,
+                        DeviceFingerprint fingerprint) {
+        DeviceAuthenticationService service = deviceAuthentication;
+        MinecraftServer server = minecraftServer;
+        LoginSessionManager manager = sessions;
+        AuthAccountStore accountStore = store;
+        if (server == null || manager == null || accountStore == null) {
+            AuthPayloadHandler.rejectAndDisconnect(player, AuthFailureReason.INTERNAL_AUTH_ERROR, null);
+            return;
+        }
+        AuthAccount account = accountStore.findByAccountId(decision.accountId()).orElse(null);
+        if (account == null) {
+            AuthPayloadHandler.rejectAndDisconnect(player, AuthFailureReason.ACCOUNT_NOT_FOUND, null);
+            return;
+        }
+        if (service == null) {
+            AuthFailureReason failure = account.banned() ? AuthFailureReason.ACCOUNT_DISABLED
+                    : config.failClosedWhenBackendUnavailable()
+                    ? AuthFailureReason.DEVICE_VERIFICATION_UNAVAILABLE : null;
+            boolean allowed = failure == null;
+            if (!manager.completeDeviceVerification(player.getUUID(), decision.sessionId(), allowed, null)) return;
+            if (allowed) AuthPayloadHandler.sendAuthenticated(player, decision.sessionId(), decision.credentialVersion());
+            else AuthPayloadHandler.rejectAndDisconnect(player, failure, null);
+            return;
+        }
+        service.evaluate(account, fingerprint, verdict -> server.execute(() -> {
+            if (!manager.completeDeviceVerification(player.getUUID(), decision.sessionId(), verdict.allowed(),
+                    verdict.deviceId())) return;
+            if (verdict.allowed()) {
+                AuthPayloadHandler.sendAuthenticated(player, decision.sessionId(), decision.credentialVersion());
+            } else {
+                AuthPayloadHandler.rejectAndDisconnect(player, verdict.failure(), null);
+            }
+        }));
     }
 
     private void playerLogin(PlayerEvent.PlayerLoggedInEvent event) {
@@ -324,16 +374,35 @@ public final class AuthServerMod {
     }
 
     private void syncApplied(SyncEvent event) {
-        if (event.type() != SyncEventType.ACCOUNT_DISABLED || !config.disconnectPlayerWhenAccountDisabled()) return;
+        boolean accountBan = event.type() == SyncEventType.ACCOUNT_DISABLED || event.type() == SyncEventType.USER_BANNED;
+        boolean deviceBan = event.type() == SyncEventType.DEVICE_BANNED;
+        if ((!accountBan || !config.disconnectPlayerWhenAccountDisabled()) && !deviceBan) return;
         MinecraftServer server = minecraftServer;
         if (server == null) return;
-        server.execute(() -> server.getPlayerList().getPlayers().forEach(player ->
-                store.findByMinecraftName(player.getGameProfile().getName()).filter(account -> !account.enabled())
-                        .ifPresent(account -> {
-                            AuthPayloadHandler.disconnectPlayer(player, AuthFailureReason.ACCOUNT_DISABLED);
-                            LOGGER.info("[MCTGAuth] Player disconnected after account disable: player={}",
-                                    player.getGameProfile().getName());
-                        })));
+        server.execute(() -> {
+            if (accountBan) {
+                server.getPlayerList().getPlayers().forEach(player ->
+                        store.findByMinecraftName(player.getGameProfile().getName())
+                                .filter(account -> !account.enabled() || account.banned())
+                                .ifPresent(account -> AuthPayloadHandler.disconnectPlayer(
+                                        player, AuthFailureReason.ACCOUNT_DISABLED)));
+            }
+            if (deviceBan) {
+                try {
+                    com.google.gson.JsonObject payload = com.google.gson.JsonParser
+                            .parseString(event.payloadJson()).getAsJsonObject();
+                    long deviceId = payload.get("deviceId").getAsLong();
+                    Set<UUID> affected = sessions.authenticatedConnectionsForDevice(deviceId);
+                    server.getPlayerList().getPlayers().stream()
+                            .filter(player -> affected.contains(player.getUUID()))
+                            .forEach(player -> AuthPayloadHandler.disconnectPlayer(player,
+                                    AuthFailureReason.DEVICE_BANNED));
+                } catch (RuntimeException exception) {
+                    LOGGER.error("[MCTGAuth] Invalid device-ban sync payload: errorType={}",
+                            exception.getClass().getSimpleName());
+                }
+            }
+        });
     }
 
     private record Anchor(Vec3 position, float yaw, float pitch) { }

@@ -25,17 +25,21 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.Set;
+import java.util.LinkedHashSet;
+import dev.example.mcauth.protocol.DeviceSignalType;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 
 public final class JsonAuthAccountStore implements AuthAccountStore {
-    public static final int SCHEMA_VERSION = 1;
+    public static final int SCHEMA_VERSION = 2;
     private static final int MAX_PROCESSED_EVENTS = 10_000;
     private static final int MAX_PROCESSED_COMMANDS = 2_000;
     private static final Gson JSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
@@ -127,7 +131,8 @@ public final class JsonAuthAccountStore implements AuthAccountStore {
             LinkedHashMap<UUID, ProcessedEvent> events = new LinkedHashMap<>(current.processedEvents);
             events.put(eventId, new ProcessedEvent(eventType, processedAt));
             trimOldest(events, MAX_PROCESSED_EVENTS);
-            Snapshot replacement = new Snapshot(accounts, events, current.remoteCommands);
+            Snapshot replacement = new Snapshot(accounts, events, current.remoteCommands,
+                    current.devices, current.bannedDevices);
             persist(replacement);
             snapshot = replacement;
             return SyncApplyResult.APPLIED;
@@ -145,7 +150,8 @@ public final class JsonAuthAccountStore implements AuthAccountStore {
             LinkedHashMap<UUID, StoredCommand> commands = new LinkedHashMap<>(snapshot.remoteCommands);
             commands.put(commandId, new StoredCommand(type, RemoteCommandStatus.RUNNING, new JsonObject(), processedAt));
             trimOldest(commands, MAX_PROCESSED_COMMANDS);
-            Snapshot replacement = new Snapshot(snapshot.accounts, snapshot.processedEvents, commands);
+            Snapshot replacement = new Snapshot(snapshot.accounts, snapshot.processedEvents, commands,
+                    snapshot.devices, snapshot.bannedDevices);
             persist(replacement);
             snapshot = replacement;
             return true;
@@ -174,7 +180,8 @@ public final class JsonAuthAccountStore implements AuthAccountStore {
             if (existing == null) throw new IllegalStateException("Remote command was not reserved");
             LinkedHashMap<UUID, StoredCommand> commands = new LinkedHashMap<>(snapshot.remoteCommands);
             commands.put(commandId, new StoredCommand(existing.type, status, result.deepCopy(), processedAt));
-            Snapshot replacement = new Snapshot(snapshot.accounts, snapshot.processedEvents, commands);
+            Snapshot replacement = new Snapshot(snapshot.accounts, snapshot.processedEvents, commands,
+                    snapshot.devices, snapshot.bannedDevices);
             persist(replacement);
             snapshot = replacement;
         } finally {
@@ -184,7 +191,8 @@ public final class JsonAuthAccountStore implements AuthAccountStore {
 
     private Snapshot readSnapshot() throws IOException {
         JsonObject root = JsonParser.parseString(Files.readString(path, StandardCharsets.UTF_8)).getAsJsonObject();
-        if (requiredInt(root, "schemaVersion") != SCHEMA_VERSION) {
+        int schemaVersion = requiredInt(root, "schemaVersion");
+        if (schemaVersion != 1 && schemaVersion != SCHEMA_VERSION) {
             throw new IllegalStateException("Unsupported local credential store schema");
         }
         LinkedHashMap<String, AuthAccount> accounts = new LinkedHashMap<>();
@@ -195,7 +203,8 @@ public final class JsonAuthAccountStore implements AuthAccountStore {
             AuthAccount account = new AuthAccount(requiredLong(value, "accountId"), requiredString(value, "minecraftName"),
                     entry.getKey(), minecraftUuid, requiredString(value, "credentialVerifier"),
                     requiredInt(value, "credentialVersion"), requiredBoolean(value, "enabled"),
-                    requiredBoolean(value, "licensed"), Instant.parse(requiredString(value, "updatedAt")));
+                    optionalBoolean(value, "banned", false), requiredBoolean(value, "licensed"),
+                    Instant.parse(requiredString(value, "updatedAt")));
             try (Argon2Verifier ignored = Argon2Verifier.parse(account.credentialVerifier())) {
                 // Loading validates verifier structure without exposing its contents.
             }
@@ -216,7 +225,29 @@ public final class JsonAuthAccountStore implements AuthAccountStore {
                     requiredObject(value, "result").deepCopy(), Instant.parse(requiredString(value, "processedAt"))));
         }
         validateAccounts(accounts);
-        return new Snapshot(accounts, events, commands);
+        LinkedHashMap<Long, LocalDeviceFingerprint> devices = new LinkedHashMap<>();
+        LinkedHashSet<Long> bannedDevices = new LinkedHashSet<>();
+        if (schemaVersion >= 2) {
+            for (JsonElement element : requiredArray(root, "devices")) {
+                JsonObject value = element.getAsJsonObject();
+                long id = requiredLong(value, "id");
+                int fingerprintVersion = requiredInt(value, "fingerprintVersion");
+                EnumMap<DeviceSignalType, String> signals = new EnumMap<>(DeviceSignalType.class);
+                JsonObject signalObject = requiredObject(value, "signals");
+                for (Map.Entry<String, JsonElement> entry : signalObject.entrySet()) {
+                    String digest = entry.getValue().getAsString();
+                    if (!digest.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("Invalid local device digest");
+                    signals.put(DeviceSignalType.valueOf(entry.getKey()), digest);
+                }
+                devices.put(id, new LocalDeviceFingerprint(fingerprintVersion, signals));
+            }
+            for (JsonElement element : requiredArray(root, "bannedDeviceIds")) {
+                long id = element.getAsLong();
+                if (id <= 0) throw new IllegalArgumentException("Invalid banned device ID");
+                bannedDevices.add(id);
+            }
+        }
+        return new Snapshot(accounts, events, commands, devices, bannedDevices);
     }
 
     private void persist(Snapshot value) {
@@ -245,6 +276,20 @@ public final class JsonAuthAccountStore implements AuthAccountStore {
             commands.add(json);
         });
         root.add("processedRemoteCommands", commands);
+        JsonArray devices = new JsonArray();
+        value.devices.forEach((id, fingerprint) -> {
+            JsonObject json = new JsonObject();
+            json.addProperty("id", id);
+            json.addProperty("fingerprintVersion", fingerprint.fingerprintVersion());
+            JsonObject signals = new JsonObject();
+            fingerprint.signals().forEach((type, digest) -> signals.addProperty(type.name(), digest));
+            json.add("signals", signals);
+            devices.add(json);
+        });
+        root.add("devices", devices);
+        JsonArray banned = new JsonArray();
+        value.bannedDevices.forEach(banned::add);
+        root.add("bannedDeviceIds", banned);
 
         byte[] encoded = JSON.toJson(root).getBytes(StandardCharsets.UTF_8);
         Path temporary = path.resolveSibling(path.getFileName() + ".tmp");
@@ -282,6 +327,7 @@ public final class JsonAuthAccountStore implements AuthAccountStore {
         value.addProperty("credentialVerifier", account.credentialVerifier());
         value.addProperty("credentialVersion", account.credentialVersion());
         value.addProperty("enabled", account.enabled());
+        value.addProperty("banned", account.banned());
         value.addProperty("licensed", account.licensed());
         value.addProperty("updatedAt", account.updatedAt().toString());
         return value;
@@ -332,8 +378,89 @@ public final class JsonAuthAccountStore implements AuthAccountStore {
         return value.get(name).getAsBoolean();
     }
 
+    private static boolean optionalBoolean(JsonObject value, String name, boolean fallback) {
+        return value.has(name) ? requiredBoolean(value, name) : fallback;
+    }
+
     private void requireOpen() {
         if (!open) throw new IllegalStateException("Local MCTGAuth credential store is not open");
+    }
+
+    @Override
+    public void cacheDevice(long deviceId, LocalDeviceFingerprint fingerprint) {
+        if (deviceId <= 0 || fingerprint == null) throw new IllegalArgumentException("Invalid cached device");
+        mutationLock.lock();
+        try {
+            requireOpen();
+            LinkedHashMap<Long, LocalDeviceFingerprint> devices = new LinkedHashMap<>(snapshot.devices);
+            devices.put(deviceId, fingerprint);
+            trimOldest(devices, 10_000);
+            Snapshot replacement = new Snapshot(snapshot.accounts, snapshot.processedEvents,
+                    snapshot.remoteCommands, devices, snapshot.bannedDevices);
+            persist(replacement);
+            snapshot = replacement;
+        } finally { mutationLock.unlock(); }
+    }
+
+    @Override
+    public Optional<Long> resolveCachedDevice(LocalDeviceFingerprint fingerprint) {
+        requireOpen();
+        long bestId = -1;
+        double bestRatio = 0;
+        for (Map.Entry<Long, LocalDeviceFingerprint> entry : snapshot.devices.entrySet()) {
+            LocalDeviceFingerprint candidate = entry.getValue();
+            if (candidate.fingerprintVersion() != fingerprint.fingerprintVersion()) continue;
+            int available = 0;
+            int matched = 0;
+            boolean strong = false;
+            for (Map.Entry<DeviceSignalType, String> signal : fingerprint.signals().entrySet()) {
+                int weight = signalWeight(signal.getKey());
+                available += weight;
+                if (signal.getValue().equals(candidate.signals().get(signal.getKey()))) {
+                    matched += weight;
+                    strong |= signal.getKey().strong();
+                }
+            }
+            double ratio = available == 0 ? 0 : (double) matched / available;
+            if (strong && ratio >= 0.50d && ratio > bestRatio) {
+                bestId = entry.getKey();
+                bestRatio = ratio;
+            }
+        }
+        return bestId > 0 ? Optional.of(bestId) : Optional.empty();
+    }
+
+    @Override public boolean isDeviceBanned(long deviceId) { requireOpen(); return snapshot.bannedDevices.contains(deviceId); }
+
+    @Override
+    public SyncApplyResult applyDeviceBanEvent(UUID eventId, SyncEventType eventType, Instant processedAt,
+                                               long deviceId, boolean banned) {
+        mutationLock.lock();
+        try {
+            requireOpen();
+            if (snapshot.processedEvents.containsKey(eventId)) return SyncApplyResult.ALREADY_PROCESSED;
+            LinkedHashSet<Long> bannedDevices = new LinkedHashSet<>(snapshot.bannedDevices);
+            if (banned) bannedDevices.add(deviceId); else bannedDevices.remove(deviceId);
+            LinkedHashMap<UUID, ProcessedEvent> events = new LinkedHashMap<>(snapshot.processedEvents);
+            events.put(eventId, new ProcessedEvent(eventType, processedAt));
+            trimOldest(events, MAX_PROCESSED_EVENTS);
+            Snapshot replacement = new Snapshot(snapshot.accounts, events, snapshot.remoteCommands,
+                    snapshot.devices, bannedDevices);
+            persist(replacement);
+            snapshot = replacement;
+            return SyncApplyResult.APPLIED;
+        } finally { mutationLock.unlock(); }
+    }
+
+    private static int signalWeight(DeviceSignalType type) {
+        return switch (type) {
+            case SYSTEM_UUID -> 50;
+            case MACHINE_ID -> 45;
+            case MOTHERBOARD_UUID -> 35;
+            case DISK_ID -> 20;
+            case GPU -> 10;
+            case MAC_ADDRESS -> 5;
+        };
     }
 
     @Override public Path path() { return path; }
@@ -353,12 +480,15 @@ public final class JsonAuthAccountStore implements AuthAccountStore {
     private record StoredCommand(RemoteCommandType type, RemoteCommandStatus status, JsonObject result,
                                  Instant processedAt) { }
     private record Snapshot(Map<String, AuthAccount> accounts, Map<UUID, ProcessedEvent> processedEvents,
-                            Map<UUID, StoredCommand> remoteCommands) {
+                            Map<UUID, StoredCommand> remoteCommands,
+                            Map<Long, LocalDeviceFingerprint> devices, Set<Long> bannedDevices) {
         private Snapshot {
             accounts = Collections.unmodifiableMap(new LinkedHashMap<>(accounts));
             processedEvents = Collections.unmodifiableMap(new LinkedHashMap<>(processedEvents));
             remoteCommands = Collections.unmodifiableMap(new LinkedHashMap<>(remoteCommands));
+            devices = Collections.unmodifiableMap(new LinkedHashMap<>(devices));
+            bannedDevices = Collections.unmodifiableSet(new LinkedHashSet<>(bannedDevices));
         }
-        private static Snapshot empty() { return new Snapshot(Map.of(), Map.of(), Map.of()); }
+        private static Snapshot empty() { return new Snapshot(Map.of(), Map.of(), Map.of(), Map.of(), Set.of()); }
     }
 }

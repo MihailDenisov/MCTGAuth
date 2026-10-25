@@ -146,3 +146,11 @@ Version 0.4 makes `/menu` and the localized Main menu action always return to th
 The dedicated server sends authenticated outbound heartbeats and idempotent join/leave events. A unique `serverInstanceId` is generated for every process. Game-thread callbacks capture immutable account-ID snapshots; a background worker atomically journals and posts them. The backend derives freshness from the heartbeat timeout and never exposes stale counts/lists as current. Playtime is calculated from UTC session intervals, includes active sessions, and merges overlaps before aggregation.
 
 Telegram bot blocking is a dedicated user moderation state. Blocked users receive only the localized restricted-access response. This does not disable Minecraft authentication; account disable remains a separate moderator action.
+
+## 19. Device observations and moderator bans
+
+Version 0.6.5 models devices, Telegram users, and Minecraft accounts as many-to-many relationships. The client sends only versioned, type-bound local SHA-256 digests after MCTGAuth activation; the backend persists separately keyed HMAC tokens. Matching is probabilistic and records observations only. It never merges users or creates a ban automatically.
+
+User and device bans are explicit moderator actions with reason, actor numeric Telegram ID, timestamps, audit records, and sync events. A linked-user operation starts from the target user's directly observed devices and expands exactly one hop; it never traverses a linked user's other devices. Shared-PC exemptions affect linked expansion but never override an explicit device ban. Ban state stays separate from ordinary account enablement.
+
+After a valid credential proof, the login session enters `DEVICE_PENDING`; device resolution runs off the Minecraft thread. Success requires both proof and device policy. The local schema-2 cache enforces known user/device bans during backend outages. Unknown devices follow the explicit outage policy, defaulting to availability for valid cached accounts.

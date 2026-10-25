@@ -18,6 +18,8 @@
   "mctgauth.error.protocol_mismatch": "Your MCTGAuth version is incompatible with the server.\n\nUpdate the modpack or MCTGAuth and try again.",
   "mctgauth.error.mod_required": "This server requires MCTGAuth Client. Install the required mod and reconnect.",
   "mctgauth.error.account_disabled": "This Minecraft profile is blocked.\n\nContact the server administration for more information.",
+  "mctgauth.error.device_banned": "Access from this device is blocked.\n\nContact the server administration for more information.",
+  "mctgauth.error.device_verification_unavailable": "This device cannot be verified while the authentication service is unavailable.\n\nTry again later.",
   "mctgauth.error.full_reset": "Server authentication data has been reset.\nYou must register again before joining the server.",
   "mctgauth.error.account_not_found": "No registration data was found for this Minecraft profile.\n\nMake sure this nickname is registered through the Telegram bot and matches your current Minecraft name.",
   "mctgauth.error.account_not_synchronized": "Your profile data has not yet synchronized with the game server.\n\nTry again later. If the problem persists, contact an administrator.",

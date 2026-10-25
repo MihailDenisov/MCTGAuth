@@ -4,7 +4,7 @@
 
 MCTGAuth is a Java 21 authentication and support system for Minecraft 1.21.1 on NeoForge 21.1.244. A Telegram bot manages registration, account ownership, tickets, moderation, and password rotation; separate client and dedicated-server mods perform replay-resistant login without transmitting the plaintext password.
 
-Current version: **0.6.4**.
+Current version: **0.6.5**.
 
 ## Architecture
 
@@ -33,6 +33,8 @@ Version 0.6.2 fixes Server Information navigation for moderators, adds consisten
 Version 0.6.3 was a backend-only deployment build of the 0.6.2 source line; it retained schema 6 and protocol 1. See the [0.6.3 release notes](docs/RELEASE_NOTES_0.6.3.md).
 
 Version 0.6.4 adds opt-in Telegram member tags sourced from an owned Minecraft account, optional reasons for registration rejection, precise localized authentication failures, and structured `RESYNC_PLAYER` diagnostics. It keeps authentication wire protocol 1 and migrates the backend database to schema 7. See the [0.6.4 release notes](docs/RELEASE_NOTES_0.6.4.md).
+
+Version 0.6.5 adds privacy-conscious device fingerprints, moderator-confirmed direct linked-device bans, explicit device bans, safe unban/exemption workflows, and offline enforcement for previously known banned devices. It moves authentication wire protocol to 2 and backend schema to 8. Raw hardware identifiers are never stored by the backend. See the [0.6.5 release notes](docs/RELEASE_NOTES_0.6.5.md).
 
 The client password is intentionally stored as plaintext in its dedicated local JSON configuration. The backend and Minecraft server never store that plaintext. No component may log passwords, API tokens, Authorization headers, verifier material, or reusable proofs.
 
@@ -75,9 +77,9 @@ On Linux/macOS use `./gradlew`. For backend development, copy the examples from 
 ## Release artifacts
 
 ```text
-auth-backend/build/distributions/auth-backend-0.6.4.tar.gz
-auth-neoforge-server/build/libs/mctgauth-server-0.6.4.jar
-auth-neoforge-client/build/libs/mctgauth-client-0.6.4.jar
+auth-backend/build/distributions/auth-backend-0.6.5.tar.gz
+auth-neoforge-server/build/libs/mctgauth-server-0.6.5.jar
+auth-neoforge-client/build/libs/mctgauth-client-0.6.5.jar
 ```
 
 ```powershell
@@ -101,6 +103,8 @@ Generated binaries belong in release assets, not in the source commit.
 - [0.6.3 release notes](docs/RELEASE_NOTES_0.6.3.md) · [Russian](docs/RELEASE_NOTES_0.6.3_RU.md)
 - [Upgrade from 0.6.3 to 0.6.4](docs/MIGRATION_0.6.3_TO_0.6.4.md) · [Russian](docs/MIGRATION_0.6.3_TO_0.6.4_RU.md)
 - [0.6.4 release notes](docs/RELEASE_NOTES_0.6.4.md) · [Russian](docs/RELEASE_NOTES_0.6.4_RU.md)
+- [Upgrade from 0.6.4 to 0.6.5](docs/MIGRATION_0.6.4_TO_0.6.5.md) · [Russian](docs/MIGRATION_0.6.4_TO_0.6.5_RU.md)
+- [0.6.5 release notes](docs/RELEASE_NOTES_0.6.5.md) · [Russian](docs/RELEASE_NOTES_0.6.5_RU.md)
 - [Telemetry API](docs/api/TELEMETRY_API.md) · [Russian](docs/api/TELEMETRY_API_RU.md)
 - [Architecture and ownership](docs/PROJECT_LOGIC.md)
 - [Security model](docs/architecture/SECURITY_MODEL.md)

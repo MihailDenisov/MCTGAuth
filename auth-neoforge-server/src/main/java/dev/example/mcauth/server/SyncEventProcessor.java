@@ -26,12 +26,23 @@ public final class SyncEventProcessor {
         } catch (RuntimeException exception) {
             throw new IllegalArgumentException("Malformed synchronization payload", exception);
         }
+        if (event.type() == dev.example.mcauth.api.SyncEventType.DEVICE_BANNED
+                || event.type() == dev.example.mcauth.api.SyncEventType.DEVICE_UNBANNED) {
+            long deviceId = positiveLong(payload, "deviceId");
+            AuthAccountStore.SyncApplyResult deviceResult = store.applyDeviceBanEvent(event.id(), event.type(),
+                    Instant.now(), deviceId, event.type() == dev.example.mcauth.api.SyncEventType.DEVICE_BANNED);
+            return deviceResult == AuthAccountStore.SyncApplyResult.APPLIED
+                    ? ApplyResult.APPLIED : ApplyResult.ALREADY_PROCESSED;
+        }
         AuthAccountStore.SyncApplyResult result = store.applySyncEvent(event.id(), event.type(), Instant.now(), accounts -> {
             switch (event.type()) {
                 case ACCOUNT_CREATED -> upsertAccount(accounts, payload, event.createdAt());
                 case CREDENTIAL_CHANGED -> updateCredential(accounts, payload, event.createdAt());
                 case ACCOUNT_ENABLED -> setEnabled(accounts, payload, true, event.createdAt());
                 case ACCOUNT_DISABLED, ACCOUNT_REMOVED -> setEnabled(accounts, payload, false, event.createdAt());
+                case USER_BANNED -> setBanned(accounts, payload, true, event.createdAt());
+                case USER_UNBANNED -> setBanned(accounts, payload, false, event.createdAt());
+                case DEVICE_BANNED, DEVICE_UNBANNED -> throw new IllegalStateException("Device event routed incorrectly");
             }
         });
         return result == AuthAccountStore.SyncApplyResult.APPLIED ? ApplyResult.APPLIED : ApplyResult.ALREADY_PROCESSED;
@@ -70,7 +81,7 @@ public final class SyncEventProcessor {
         }
         accounts.put(current.normalizedName(), new AuthAccount(current.accountId(), current.minecraftName(),
                 current.normalizedName(), current.minecraftUuid(), verifier, version, bool(payload, "enabled"),
-                current.licensed(), eventTime));
+                current.banned(), current.licensed(), eventTime));
     }
 
     private static void setEnabled(Map<String, AuthAccount> accounts, JsonObject payload, boolean enabled,
@@ -79,7 +90,16 @@ public final class SyncEventProcessor {
         if (eventTime.isBefore(current.updatedAt())) return;
         accounts.put(current.normalizedName(), new AuthAccount(current.accountId(), current.minecraftName(),
                 current.normalizedName(), current.minecraftUuid(), current.credentialVerifier(),
-                current.credentialVersion(), enabled, current.licensed(), eventTime));
+                current.credentialVersion(), enabled, current.banned(), current.licensed(), eventTime));
+    }
+
+    private static void setBanned(Map<String, AuthAccount> accounts, JsonObject payload, boolean banned,
+                                  Instant eventTime) {
+        AuthAccount current = requireAccount(accounts, positiveLong(payload, "accountId"));
+        if (eventTime.isBefore(current.updatedAt())) return;
+        accounts.put(current.normalizedName(), new AuthAccount(current.accountId(), current.minecraftName(),
+                current.normalizedName(), current.minecraftUuid(), current.credentialVerifier(),
+                current.credentialVersion(), current.enabled(), banned, current.licensed(), eventTime));
     }
 
     private static AuthAccount requireAccount(Map<String, AuthAccount> accounts, long accountId) {

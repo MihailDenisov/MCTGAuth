@@ -56,6 +56,7 @@ One expiring private-input action per moderator numeric Telegram ID. `REPLY_TO_T
 - `V005__telemetry_and_bot_blocking.sql`: server heartbeat state, idempotent player events, timestamp-based player sessions, and Telegram bot blocking.
 - `V006__ticket_closure_comments.sql`: typed/visible ticket messages and persisted resolve/close comment input targets.
 - `V007__chat_tags_and_registration_rejection.sql`: nullable authoritative-account chat-tag preferences, a managed-tag marker used for reliable clearing/reconciliation, and persisted registration-rejection reason input.
+- `V008__device_fingerprints_and_bans.sql`: pseudonymous devices/signals, many-to-many user/account observations, auditable user/linked/device bans, account effects, shared-PC exemptions, and persisted ban-reason input.
 
 `users.chat_tag_account_id` references `minecraft_accounts(id)` with `ON DELETE SET NULL`. `users.chat_tag_managed` distinguishes the untouched default from an explicit managed “No tag” preference, allowing a failed Telegram clear to be retried without storing arbitrary tag text. New and existing users default to no managed tag.
 
@@ -64,3 +65,9 @@ One expiring private-input action per moderator numeric Telegram ID. `REPLY_TO_T
 `server_status` is keyed by `server_id` and stores instance/process timing, last heartbeat, player counts, and clean shutdown. `player_sessions` references the authoritative Minecraft account ID and uses nicknames only as snapshots. `telemetry_events` de-duplicates stable join/leave UUIDs. A new instance heartbeat finalizes open sessions from the prior instance at its last trustworthy heartbeat.
 
 The current schema requires every Minecraft account to have an owning Telegram user. Ownerless technical accounts are deferred.
+
+## Device and ban tables (schema 8)
+
+`devices` contains only an opaque numeric ID, fingerprint format version, resolver confidence, and timestamps. `device_signals` contains type-tagged backend HMAC tokens—never raw hardware identifiers or unhashed client values. `user_devices` and `account_devices` are independent many-to-many histories with first/last seen and login counts.
+
+`bans` stores append-preserved `USER_BAN`, `LINKED_DEVICE_BAN`, and `DEVICE_BAN` records, moderator numeric ID, reason, timestamps, optional expiry, active/removal state, and an origin link for one-hop groups. `ban_account_effects` records which accounts were affected and their pre-ban enabled state. `device_ban_exemptions` expresses explicit user↔device exemptions for linked-ban propagation; it does not override an explicit device ban.

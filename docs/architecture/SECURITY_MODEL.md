@@ -31,3 +31,12 @@ Security decisions that must be resolved before production implementation:
 - Cross-chat moderator input actions are isolated by moderator ID, expire after 30 minutes, and are cleared by successful completion, `/cancel`, or `/menu`.
 
 The Minecraft challenge-response protocol uses client-side Argon2id derivation and a nonce-bound HMAC proof. The dedicated client config is the only approved plaintext-password persistence location; backend and Minecraft server storage contain verifier material only.
+
+## Device privacy and ban enforcement
+
+- Hardware values are collected only by an activated MCTGAuth client. Enabled values are normalized and SHA-256 digested locally; raw values must never cross the protocol boundary, enter logs, audit data, fixtures, or the backend database.
+- The backend re-tokenizes each client digest with HMAC-SHA-256 and an external `DEVICE_FINGERPRINT_SECRET` distinct from API/bot tokens. Rotating this secret intentionally breaks matching with historical observations and requires an operator migration/re-enrollment plan.
+- Fingerprints are spoofable and probabilistic, not identity proof. GPU/MAC are weak, disabled by default, and never sufficient to resolve a device or drive linked enforcement.
+- Matching only records many-to-many observations. A moderator must explicitly create every user, linked-user, or device ban. Linked expansion is one hop from devices directly observed for the target and never recursively traverses a linked user's other devices.
+- Linked-ban exemptions do not override explicit device bans. Ban state is separate from ordinary account enablement so unban cannot re-enable a manually disabled account.
+- The server caches opaque device IDs plus client digests only to enforce already-known device bans during backend outages. Unknown devices follow the explicit fail-open/fail-closed setting; the default preserves login for valid cached accounts.

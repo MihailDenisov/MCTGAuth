@@ -78,15 +78,17 @@ class AuthenticationAndSyncTest {
                 Duration.ofSeconds(60), 3);
         UUID player = UUID.randomUUID();
         manager.connected(player, player, "Test_Player");
-        var challengeDecision = manager.hello(player, new ClientHelloPayload(1, "0.3", AuthProtocol.REQUIRED_FEATURES));
+        var challengeDecision = manager.hello(player, new ClientHelloPayload(AuthProtocol.AUTH_PROTOCOL_VERSION, AuthProtocol.MOD_VERSION, AuthProtocol.REQUIRED_FEATURES));
         var challenge = challengeDecision.challenge();
         char[] password = "correct password".toCharArray();
         byte[] key = ChallengeProof.deriveKey(password, challenge.argon2());
-        byte[] proof = ChallengeProof.create(key, 1, challenge.nonce(), challenge.sessionId(), "test_player", 1);
+        byte[] proof = ChallengeProof.create(key, AuthProtocol.AUTH_PROTOCOL_VERSION,
+                challenge.nonce(), challenge.sessionId(), "test_player", 1);
         AuthResponsePayload response = new AuthResponsePayload(challenge.sessionId(), 1, proof);
         var success = manager.verify(player, response);
-        assertTrue(success.authenticated());
+        assertTrue(success.deviceCheckRequired());
         assertEquals(1, success.credentialVersion());
+        assertTrue(manager.completeDeviceVerification(player, response.sessionId(), true, 10L));
         assertFalse(manager.verify(player, response).authenticated(), "a consumed proof must not authenticate twice");
         assertTrue(manager.isAuthenticated(player));
         Arrays.fill(password, '\0');
@@ -104,9 +106,26 @@ class AuthenticationAndSyncTest {
         UUID player = UUID.randomUUID();
         manager.connected(player, player, "Test_Player");
         var decision = manager.hello(player,
-                new ClientHelloPayload(1, "0.4.2", AuthProtocol.REQUIRED_FEATURES));
+                new ClientHelloPayload(AuthProtocol.AUTH_PROTOCOL_VERSION, AuthProtocol.MOD_VERSION, AuthProtocol.REQUIRED_FEATURES));
         assertFalse(decision.authenticated());
         assertEquals(dev.example.mcauth.protocol.AuthFailureReason.ACCOUNT_DISABLED, decision.failure());
+        manager.close();
+    }
+
+    @Test
+    void legacyProtocolCannotBypassRequiredFingerprintCapability() {
+        processor.apply(accountEvent(UUID.randomUUID(), SyncEventType.ACCOUNT_CREATED, 1, true, true));
+        LoginSessionManager manager = new LoginSessionManager(store, Clock.systemUTC(), new SecureRandom(),
+                Duration.ofSeconds(60), 3);
+        UUID player = UUID.randomUUID();
+        manager.connected(player, player, "Test_Player");
+
+        var decision = manager.hello(player,
+                new ClientHelloPayload(1, "0.6.4", AuthProtocol.FEATURE_AUTH_CHALLENGE_V1
+                        | AuthProtocol.FEATURE_LOCALIZED_FAILURES));
+
+        assertEquals(dev.example.mcauth.protocol.AuthFailureReason.PROTOCOL_MISMATCH, decision.failure());
+        assertFalse(manager.isAuthenticated(player));
         manager.close();
     }
 
@@ -118,7 +137,7 @@ class AuthenticationAndSyncTest {
                 Duration.ofSeconds(30), 3);
         UUID player = UUID.randomUUID();
         manager.connected(player, player, "Test_Player");
-        var challenge = manager.hello(player, new ClientHelloPayload(1, "0.3", AuthProtocol.REQUIRED_FEATURES)).challenge();
+        var challenge = manager.hello(player, new ClientHelloPayload(AuthProtocol.AUTH_PROTOCOL_VERSION, AuthProtocol.MOD_VERSION, AuthProtocol.REQUIRED_FEATURES)).challenge();
         byte[] wrong = new byte[32];
         assertTrue(manager.verify(player, new AuthResponsePayload(challenge.sessionId(), 1, wrong)).retryAllowed());
         var renewed = manager.session(player).orElseThrow();
@@ -129,7 +148,7 @@ class AuthenticationAndSyncTest {
         UUID unknown = UUID.randomUUID();
         manager.connected(unknown, unknown, "NoAccount");
         assertEquals(dev.example.mcauth.protocol.AuthFailureReason.ACCOUNT_NOT_FOUND,
-                manager.hello(unknown, new ClientHelloPayload(1, "0.3", AuthProtocol.REQUIRED_FEATURES)).failure());
+                manager.hello(unknown, new ClientHelloPayload(AuthProtocol.AUTH_PROTOCOL_VERSION, AuthProtocol.MOD_VERSION, AuthProtocol.REQUIRED_FEATURES)).failure());
         manager.close();
     }
 
@@ -141,10 +160,11 @@ class AuthenticationAndSyncTest {
         UUID player = UUID.randomUUID();
         manager.connected(player, player, "Test_Player");
         var oldChallenge = manager.hello(player,
-                new ClientHelloPayload(1, "0.3", AuthProtocol.REQUIRED_FEATURES)).challenge();
+                new ClientHelloPayload(AuthProtocol.AUTH_PROTOCOL_VERSION, AuthProtocol.MOD_VERSION, AuthProtocol.REQUIRED_FEATURES)).challenge();
         char[] password = "correct password".toCharArray();
         byte[] key = ChallengeProof.deriveKey(password, oldChallenge.argon2());
-        byte[] proof = ChallengeProof.create(key, 1, oldChallenge.nonce(), oldChallenge.sessionId(), "test_player", 1);
+        byte[] proof = ChallengeProof.create(key, AuthProtocol.AUTH_PROTOCOL_VERSION,
+                oldChallenge.nonce(), oldChallenge.sessionId(), "test_player", 1);
         processor.apply(accountEvent(UUID.randomUUID(), SyncEventType.CREDENTIAL_CHANGED, 2, true, false));
 
         var decision = manager.verify(player, new AuthResponsePayload(oldChallenge.sessionId(), 1, proof));
@@ -169,7 +189,7 @@ class AuthenticationAndSyncTest {
         manager.connected(player, player, "OKonHblu_RAVE");
 
         var decision = manager.hello(player,
-                new ClientHelloPayload(1, "0.6.4", AuthProtocol.REQUIRED_FEATURES));
+                new ClientHelloPayload(AuthProtocol.AUTH_PROTOCOL_VERSION, AuthProtocol.MOD_VERSION, AuthProtocol.REQUIRED_FEATURES));
 
         assertEquals(dev.example.mcauth.protocol.AuthFailureReason.ACCOUNT_NOT_FOUND, decision.failure());
         manager.close();
@@ -183,12 +203,12 @@ class AuthenticationAndSyncTest {
         UUID unknownConnection = UUID.randomUUID();
         assertEquals(dev.example.mcauth.protocol.AuthFailureReason.INVALID_SESSION,
                 manager.hello(unknownConnection,
-                        new ClientHelloPayload(1, "0.6.4", AuthProtocol.REQUIRED_FEATURES)).failure());
+                        new ClientHelloPayload(AuthProtocol.AUTH_PROTOCOL_VERSION, AuthProtocol.MOD_VERSION, AuthProtocol.REQUIRED_FEATURES)).failure());
 
         UUID player = UUID.randomUUID();
         manager.connected(player, player, "Test_Player");
         var challenge = manager.hello(player,
-                new ClientHelloPayload(1, "0.6.4", AuthProtocol.REQUIRED_FEATURES)).challenge();
+                new ClientHelloPayload(AuthProtocol.AUTH_PROTOCOL_VERSION, AuthProtocol.MOD_VERSION, AuthProtocol.REQUIRED_FEATURES)).challenge();
         var invalid = manager.verify(player,
                 new AuthResponsePayload(UUID.randomUUID(), challenge.credentialVersion(), new byte[32]));
         assertEquals(dev.example.mcauth.protocol.AuthFailureReason.INVALID_CHALLENGE, invalid.failure());

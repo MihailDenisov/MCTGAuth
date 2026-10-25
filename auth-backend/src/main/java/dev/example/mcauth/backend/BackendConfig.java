@@ -23,7 +23,9 @@ public record BackendConfig(
         String authApiToken,
         String serverId,
         BotLocale adminLocale,
-        BotLocale defaultUserLocale) {
+        BotLocale defaultUserLocale,
+        String deviceFingerprintSecret,
+        DeviceFingerprintConfig deviceFingerprint) {
 
     public BackendConfig {
         moderatorTelegramIds = Set.copyOf(moderatorTelegramIds);
@@ -56,6 +58,24 @@ public record BackendConfig(
         if (adminLocale == null || defaultUserLocale == null) {
             throw new IllegalArgumentException("Configured locales are required");
         }
+        if (deviceFingerprintSecret == null || deviceFingerprintSecret.length() < 32) {
+            throw new IllegalArgumentException("DEVICE_FINGERPRINT_SECRET must contain at least 32 characters");
+        }
+        if (deviceFingerprintSecret.equals(authApiToken) || deviceFingerprintSecret.equals(telegramBotToken)) {
+            throw new IllegalArgumentException("DEVICE_FINGERPRINT_SECRET must be distinct from other credentials");
+        }
+        if (deviceFingerprint == null) throw new IllegalArgumentException("Device fingerprint configuration is required");
+    }
+
+    public BackendConfig(Path databasePath, String telegramBotToken, String telegramBotUsername,
+                         long telegramAdminChatId, Set<Long> moderatorTelegramIds, String howToPlayUrl,
+                         Path telegramFeatureConfigPath, String httpBindAddress, int httpPort,
+                         String authApiToken, String serverId, BotLocale adminLocale,
+                         BotLocale defaultUserLocale) {
+        this(databasePath, telegramBotToken, telegramBotUsername, telegramAdminChatId,
+                moderatorTelegramIds, howToPlayUrl, telegramFeatureConfigPath, httpBindAddress,
+                httpPort, authApiToken, serverId, adminLocale, defaultUserLocale,
+                "test-device-fingerprint-secret-000000000000", DeviceFingerprintConfig.defaults());
     }
 
     public static BackendConfig fromEnvironment(Map<String, String> environment) {
@@ -82,7 +102,31 @@ public record BackendConfig(
                 required(environment, "SERVER_ID"),
                 BotLocale.configured(environment.getOrDefault("ADMIN_LOCALE", "en"), "ADMIN_LOCALE"),
                 BotLocale.configured(environment.getOrDefault("DEFAULT_USER_LOCALE", "en"),
-                        "DEFAULT_USER_LOCALE"));
+                        "DEFAULT_USER_LOCALE"),
+                required(environment, "DEVICE_FINGERPRINT_SECRET"),
+                deviceConfig(environment));
+    }
+
+    private static DeviceFingerprintConfig deviceConfig(Map<String, String> environment) {
+        java.util.EnumMap<DeviceFingerprintConfig.SignalType, Integer> weights =
+                new java.util.EnumMap<>(DeviceFingerprintConfig.SignalType.class);
+        for (DeviceFingerprintConfig.SignalType type : DeviceFingerprintConfig.SignalType.values()) {
+            String key = "DEVICE_SIGNAL_WEIGHT_" + type.name();
+            weights.put(type, Integer.parseInt(environment.getOrDefault(key,
+                    Integer.toString(type.defaultWeight())).trim()));
+        }
+        return new DeviceFingerprintConfig(
+                Boolean.parseBoolean(environment.getOrDefault("DEVICE_FINGERPRINT_ENABLED", "true")),
+                Integer.parseInt(environment.getOrDefault("DEVICE_FINGERPRINT_VERSION", "1")),
+                Integer.parseInt(environment.getOrDefault("DEVICE_OBSERVATION_RETENTION_DAYS", "365")),
+                weights,
+                Boolean.parseBoolean(environment.getOrDefault("DEVICE_BAN_ENABLED", "true")));
+    }
+
+    @Override public String toString() {
+        return "BackendConfig[databasePath=" + databasePath + ", telegramBotToken=<redacted>, "
+                + "telegramBotUsername=" + telegramBotUsername + ", authApiToken=<redacted>, "
+                + "deviceFingerprintSecret=<redacted>, serverId=" + serverId + "]";
     }
 
     private static String required(Map<String, String> environment, String key) {

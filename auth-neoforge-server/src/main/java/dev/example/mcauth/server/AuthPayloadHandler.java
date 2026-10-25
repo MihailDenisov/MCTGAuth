@@ -50,7 +50,12 @@ final class AuthPayloadHandler {
             return;
         }
         try {
-            sendDecision(player, runtime.sessions().verify(player.getUUID(), payload));
+            LoginSessionManager.Decision decision = runtime.sessions().verify(player.getUUID(), payload);
+            if (decision.deviceCheckRequired()) {
+                runtime.evaluateDevice(player, decision, payload.deviceFingerprint());
+            } else {
+                sendDecision(player, decision);
+            }
         } catch (RuntimeException exception) {
             rejectAndDisconnect(player, AuthFailureReason.INTERNAL_AUTH_ERROR, exception);
         }
@@ -58,11 +63,7 @@ final class AuthPayloadHandler {
 
     static void sendDecision(ServerPlayer player, LoginSessionManager.Decision decision) {
         if (decision.authenticated()) {
-            LOGGER.info("[MCTGAuth] Authentication successful: player={} uuid={} credentialVersion={}",
-                    player.getGameProfile().getName(), player.getUUID(), decision.credentialVersion());
-            PacketDistributor.sendToPlayer(player, new AuthSuccessPayload(decision.sessionId()));
-            AuthServerMod runtime = AuthServerMod.instance();
-            if (runtime != null) runtime.playerAuthenticated(player);
+            sendAuthenticated(player, decision.sessionId(), decision.credentialVersion());
             return;
         }
         if (decision.failure() != null) {
@@ -77,6 +78,14 @@ final class AuthPayloadHandler {
             logRejection(player, decision.failure(), null);
         }
         if (decision.challenge() != null) PacketDistributor.sendToPlayer(player, decision.challenge());
+    }
+
+    static void sendAuthenticated(ServerPlayer player, java.util.UUID sessionId, int credentialVersion) {
+        LOGGER.info("[MCTGAuth] Authentication successful: player={} uuid={} credentialVersion={}",
+                player.getGameProfile().getName(), player.getUUID(), credentialVersion);
+        PacketDistributor.sendToPlayer(player, new AuthSuccessPayload(sessionId));
+        AuthServerMod runtime = AuthServerMod.instance();
+        if (runtime != null) runtime.playerAuthenticated(player);
     }
 
     static void rejectAndDisconnect(ServerPlayer player,
@@ -124,6 +133,8 @@ final class AuthPayloadHandler {
             case PROTOCOL_MISMATCH -> "mctgauth.error.protocol_mismatch";
             case CLIENT_MISSING -> "mctgauth.error.mod_required";
             case ACCOUNT_DISABLED -> "mctgauth.error.account_disabled";
+            case DEVICE_BANNED -> "mctgauth.error.device_banned";
+            case DEVICE_VERIFICATION_UNAVAILABLE -> "mctgauth.error.device_verification_unavailable";
             case ACCOUNT_NOT_FOUND -> "mctgauth.error.account_not_found";
             case ACCOUNT_NOT_SYNCHRONIZED -> "mctgauth.error.account_not_synchronized";
             case CREDENTIAL_OUTDATED -> "mctgauth.error.credential_outdated";

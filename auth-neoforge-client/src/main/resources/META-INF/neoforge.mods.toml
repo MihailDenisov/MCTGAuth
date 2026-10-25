@@ -4,7 +4,7 @@ license="All Rights Reserved"
 
 [[mods]]
 modId="mctgauth_client"
-version="0.6.4"
+version="0.6.5"
 displayName="MCTGAuth Client"
 description='''MCTGAuth automatic authentication and client settings.'''
 

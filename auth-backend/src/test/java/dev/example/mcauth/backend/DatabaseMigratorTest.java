@@ -17,15 +17,18 @@ class DatabaseMigratorTest {
     void appliesMigrationsInOrderAndDoesNotReapplyThem() throws Exception {
         Path path = temporaryDirectory.resolve("migrations.db");
         try (BackendDatabase database = BackendDatabase.open(path)) {
-            assertEquals("1:initial,2:backend_phase_2,3:user_locale,4:telegram_workflow_fixes,5:telemetry_and_bot_blocking,6:ticket_closure_comments,7:chat_tags_and_registration_rejection",
+            assertEquals("1:initial,2:backend_phase_2,3:user_locale,4:telegram_workflow_fixes,5:telemetry_and_bot_blocking,6:ticket_closure_comments,7:chat_tags_and_registration_rejection,8:device_fingerprints_and_bans",
                     migrations(database));
             assertTrue(tableContains(database, "users", "chat_tag_account_id"));
             assertTrue(tableContains(database, "users", "chat_tag_managed"));
             assertTrue(tableSql(database, "moderator_pending_actions")
                     .contains("REGISTRATION_REJECTION_REASON"));
+            assertTrue(tableContains(database, "devices", "last_seen_at"));
+            assertTrue(tableContains(database, "device_signals", "signal_hash"));
+            assertTrue(tableContains(database, "bans", "origin_ban_id"));
         }
         try (BackendDatabase database = BackendDatabase.open(path)) {
-            assertEquals("1:initial,2:backend_phase_2,3:user_locale,4:telegram_workflow_fixes,5:telemetry_and_bot_blocking,6:ticket_closure_comments,7:chat_tags_and_registration_rejection",
+            assertEquals("1:initial,2:backend_phase_2,3:user_locale,4:telegram_workflow_fixes,5:telemetry_and_bot_blocking,6:ticket_closure_comments,7:chat_tags_and_registration_rejection,8:device_fingerprints_and_bans",
                     migrations(database));
         }
     }

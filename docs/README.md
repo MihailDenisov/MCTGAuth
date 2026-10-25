@@ -2,7 +2,7 @@
 
 [Русская версия](README_RU.md) · [Project home](../README.md)
 
-This index separates operator-facing guides from design references. The current release targets Java 21, Minecraft 1.21.1, NeoForge 21.1.244, and MCTGAuth 0.6.4.
+This index separates operator-facing guides from design references. The current release targets Java 21, Minecraft 1.21.1, NeoForge 21.1.244, and MCTGAuth 0.6.5.
 
 ## Start here
 
@@ -22,6 +22,8 @@ This index separates operator-facing guides from design references. The current 
 - [Upgrade from 0.6.2 to 0.6.3](MIGRATION_0.6.2_TO_0.6.3.md)
 - [0.6.4 release notes](RELEASE_NOTES_0.6.4.md)
 - [Upgrade from 0.6.3 to 0.6.4](MIGRATION_0.6.3_TO_0.6.4.md)
+- [0.6.5 release notes](RELEASE_NOTES_0.6.5.md)
+- [Upgrade from 0.6.4 to 0.6.5](MIGRATION_0.6.4_TO_0.6.5.md)
 - [Telemetry API](api/TELEMETRY_API.md)
 - [0.4.2 release notes](RELEASE_NOTES_0.4.2.md)
 

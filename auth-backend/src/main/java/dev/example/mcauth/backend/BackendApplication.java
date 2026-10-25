@@ -37,6 +37,9 @@ public final class BackendApplication {
                 java.time.Duration.ofSeconds(telegramFeatures.heartbeatTimeoutSeconds()));
         TelegramUserModerationService userModeration = new TelegramUserModerationService(
                 database, moderators, audit, clock);
+        DeviceFingerprintService deviceFingerprints = new DeviceFingerprintService(
+                database, clock, config.serverId(), config.deviceFingerprintSecret(), config.deviceFingerprint());
+        BanService bans = new BanService(database, moderators, syncEvents, audit, clock);
         LocalizationService localization = new LocalizationService();
         LocaleResolver locales = new LocaleResolver(
                 database, config.adminLocale(), config.defaultUserLocale());
@@ -44,10 +47,11 @@ public final class BackendApplication {
                 config.telegramBotToken(), config.telegramBotUsername(), config.telegramAdminChatId(),
                 config.howToPlayUrl(), telegramFeatures,
                 config.serverId(), tickets, supportTickets, accounts, moderators, remoteCommands,
-                pendingModeratorActions, telemetry, userModeration, localization, locales, json);
+                pendingModeratorActions, telemetry, userModeration, bans, localization, locales, json);
         BackendHttpServer http = new BackendHttpServer(
                 config.httpBindAddress(), config.httpPort(), config.authApiToken(), database,
-                bot::isRunning, new SyncApiService(syncEvents, config.serverId()), remoteCommands, telemetry, json);
+                bot::isRunning, new SyncApiService(syncEvents, config.serverId()), remoteCommands,
+                telemetry, deviceFingerprints, json);
 
         Runtime.getRuntime().addShutdownHook(Thread.ofPlatform().unstarted(() -> {
             http.close();

@@ -28,6 +28,7 @@ minecraft-telegram-auth/
 ├── auth-api/                             # Framework-independent contracts
 ├── auth-backend/                         # Telegram bot + HTTP sync backend
 ├── auth-neoforge-server/                 # Dedicated-server NeoForge mod
+├── auth-neoforge-protocol/               # Safe client/server payloads and proof/fingerprint primitives
 └── auth-neoforge-client/                 # Client NeoForge mod
 ```
 
@@ -73,3 +74,7 @@ auth-neoforge-server/src/main/java/.../server/remote/
 ```
 
 The backend owns command creation, authorization, persistence, expiry, and result collection. The Minecraft server owns execution. `auth-api` contains only framework-independent command DTOs/enums. No module should expose a general-purpose remote console.
+
+## Device fingerprint and ban ownership
+
+`auth-neoforge-protocol` owns only the versioned fingerprint payload and allowlisted signal types. `auth-neoforge-client` owns OS collection, normalization, local digesting, opt-in weak signals, and process caching. `auth-neoforge-server` owns login gating, asynchronous backend evaluation, and the minimal offline device-ban cache. `auth-backend` owns HMAC tokenization, device resolution/history, authoritative bans/exemptions/audit, Telegram moderation UI, and sync-event production. No raw hardware identifier belongs outside the client collection boundary.

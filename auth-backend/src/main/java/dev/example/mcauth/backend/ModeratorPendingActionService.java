@@ -25,7 +25,7 @@ public final class ModeratorPendingActionService {
     }
 
     public void beginReply(ModeratorIdentity moderator, long ticketId) {
-        begin(moderator, ticketId, ModeratorPendingAction.Type.REPLY_TO_TICKET, null);
+        begin(moderator, ticketId, null, ModeratorPendingAction.Type.REPLY_TO_TICKET, null);
     }
 
     public void beginClosureComment(
@@ -33,23 +33,37 @@ public final class ModeratorPendingActionService {
         if (targetStatus != TicketStatus.RESOLVED && targetStatus != TicketStatus.CLOSED) {
             throw new IllegalArgumentException("Unsupported closure status");
         }
-        begin(moderator, ticketId, ModeratorPendingAction.Type.TICKET_CLOSURE_COMMENT, targetStatus);
+        begin(moderator, ticketId, null, ModeratorPendingAction.Type.TICKET_CLOSURE_COMMENT, targetStatus);
     }
 
     public void beginRegistrationRejectionReason(ModeratorIdentity moderator, long ticketId) {
-        begin(moderator, ticketId, ModeratorPendingAction.Type.REGISTRATION_REJECTION_REASON, null);
+        begin(moderator, ticketId, null, ModeratorPendingAction.Type.REGISTRATION_REJECTION_REASON, null);
+    }
+
+    public void beginUserBanReason(ModeratorIdentity moderator, long userId) {
+        if (userId <= 0) throw new IllegalArgumentException("User ID must be positive");
+        begin(moderator, 0, userId, ModeratorPendingAction.Type.USER_BAN_REASON, null);
+    }
+
+    public void beginDeviceBanReason(ModeratorIdentity moderator, long deviceId) {
+        if (deviceId <= 0) throw new IllegalArgumentException("Device ID must be positive");
+        begin(moderator, 0, deviceId, ModeratorPendingAction.Type.DEVICE_BAN_REASON, null);
     }
 
     private void begin(
-            ModeratorIdentity moderator, long ticketId, ModeratorPendingAction.Type type,
+            ModeratorIdentity moderator, long ticketId, Long targetId, ModeratorPendingAction.Type type,
             TicketStatus targetStatus) {
         database.transaction(connection -> {
             ModeratorPermission permission = switch (type) {
                 case REPLY_TO_TICKET -> ModeratorPermission.TICKET_REPLY;
                 case TICKET_CLOSURE_COMMENT -> ModeratorPermission.TICKET_RESOLVE;
                 case REGISTRATION_REJECTION_REASON -> ModeratorPermission.TICKET_REJECT;
+                case USER_BAN_REASON -> ModeratorPermission.USER_BAN;
+                case DEVICE_BAN_REASON -> ModeratorPermission.DEVICE_BAN;
             };
             moderators.requirePermission(connection, moderator, permission);
+            if (type != ModeratorPendingAction.Type.USER_BAN_REASON
+                    && type != ModeratorPendingAction.Type.DEVICE_BAN_REASON) {
             try (PreparedStatement ticket = connection.prepareStatement(
                     "SELECT type, status, assigned_moderator_telegram_id FROM tickets WHERE id = ?")) {
                 ticket.setLong(1, ticketId);
@@ -65,6 +79,7 @@ public final class ModeratorPendingActionService {
                                 : "RESOLVED".equals(status) || "REJECTED".equals(status);
                         case REGISTRATION_REJECTION_REASON -> "REGISTRATION".equals(ticketType)
                                 && ("OPEN".equals(status) || "IN_PROGRESS".equals(status));
+                        case USER_BAN_REASON, DEVICE_BAN_REASON -> false;
                     };
                     if (!valid) {
                         throw new WorkflowException(WorkflowException.Code.INVALID_STATE,
@@ -77,25 +92,28 @@ public final class ModeratorPendingActionService {
                     }
                 }
             }
+            }
             Instant now = Instant.now(clock);
             try (PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO moderator_pending_actions
-                        (moderator_telegram_id, action_type, ticket_id, target_status, created_at, expires_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                        (moderator_telegram_id, action_type, ticket_id, target_id, target_status, created_at, expires_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(moderator_telegram_id) DO UPDATE SET
                         action_type = excluded.action_type,
                         ticket_id = excluded.ticket_id,
+                        target_id = excluded.target_id,
                         target_status = excluded.target_status,
                         created_at = excluded.created_at,
                         expires_at = excluded.expires_at
                     """)) {
                 statement.setLong(1, moderator.telegramId());
                 statement.setString(2, type.name());
-                statement.setLong(3, ticketId);
-                if (targetStatus == null) statement.setNull(4, java.sql.Types.VARCHAR);
-                else statement.setString(4, targetStatus.name());
-                statement.setString(5, now.toString());
-                statement.setString(6, now.plus(ACTION_TTL).toString());
+                if (ticketId <= 0) statement.setNull(3, java.sql.Types.BIGINT); else statement.setLong(3, ticketId);
+                if (targetId == null) statement.setNull(4, java.sql.Types.BIGINT); else statement.setLong(4, targetId);
+                if (targetStatus == null) statement.setNull(5, java.sql.Types.VARCHAR);
+                else statement.setString(5, targetStatus.name());
+                statement.setString(6, now.toString());
+                statement.setString(7, now.plus(ACTION_TTL).toString());
                 statement.executeUpdate();
             }
             return null;
@@ -112,7 +130,7 @@ public final class ModeratorPendingActionService {
                 expired.executeUpdate();
             }
             try (PreparedStatement statement = connection.prepareStatement("""
-                    SELECT action_type, ticket_id, target_status, created_at, expires_at
+                    SELECT action_type, ticket_id, target_id, target_status, created_at, expires_at
                     FROM moderator_pending_actions WHERE moderator_telegram_id = ?
                     """)) {
                 statement.setLong(1, moderatorTelegramId);
@@ -122,6 +140,7 @@ public final class ModeratorPendingActionService {
                             moderatorTelegramId,
                             ModeratorPendingAction.Type.valueOf(result.getString("action_type")),
                             result.getLong("ticket_id"),
+                            nullableLong(result, "target_id"),
                             result.getString("target_status") == null ? null
                                     : TicketStatus.valueOf(result.getString("target_status")),
                             Instant.parse(result.getString("created_at")),
@@ -129,6 +148,11 @@ public final class ModeratorPendingActionService {
                 }
             }
         });
+    }
+
+    private static Long nullableLong(ResultSet result, String column) throws java.sql.SQLException {
+        long value = result.getLong(column);
+        return result.wasNull() ? null : value;
     }
 
     public void clear(long moderatorTelegramId) {

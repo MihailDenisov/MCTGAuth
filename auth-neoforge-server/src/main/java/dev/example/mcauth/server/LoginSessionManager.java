@@ -85,7 +85,7 @@ public final class LoginSessionManager implements AutoCloseable {
                 return Decision.failure(expectedSessionId, AuthFailureReason.AUTH_TIMEOUT, false, 0);
             }
             CredentialCheck check = store.withAccountByMinecraftName(session.normalizedIdentity(), account -> {
-                if (!account.enabled()) return CredentialCheck.DISABLED;
+                if (!account.enabled() || account.banned()) return CredentialCheck.DISABLED;
                 if (!Objects.equals(expectedSessionId, response.sessionId())) return CredentialCheck.INVALID_CHALLENGE;
                 if (challengedVersion != response.credentialVersion()
                         || account.credentialVersion() != challengedVersion) return CredentialCheck.OUTDATED;
@@ -94,7 +94,6 @@ public final class LoginSessionManager implements AutoCloseable {
                     try {
                         boolean valid = ChallengeProof.verify(key, response.proof(), AuthProtocol.AUTH_PROTOCOL_VERSION,
                                 nonce, expectedSessionId, session.normalizedIdentity(), challengedVersion);
-                        if (valid) session.authenticate();
                         return valid ? CredentialCheck.VALID : CredentialCheck.INVALID;
                     } finally {
                         Arrays.fill(key, (byte) 0);
@@ -135,8 +134,10 @@ public final class LoginSessionManager implements AutoCloseable {
             }
             if (nonce != null) Arrays.fill(nonce, (byte) 0);
             if (check != CredentialCheck.VALID) return failedAttempt(session, expectedSessionId, AuthFailureReason.INVALID_CREDENTIALS);
-            successes.increment();
-            return Decision.success(expectedSessionId, challengedVersion);
+            long accountId = store.findByMinecraftName(session.normalizedIdentity())
+                    .map(AuthAccount::accountId).orElseThrow();
+            session.devicePending(expectedSessionId);
+            return Decision.deviceCheck(expectedSessionId, challengedVersion, accountId);
         }
     }
 
@@ -150,7 +151,7 @@ public final class LoginSessionManager implements AutoCloseable {
         Decision next = newChallenge(session);
         if (next.challenge() == null) return next;
         return new Decision(false, sessionId, reason, true, remaining, next.challenge(),
-                next.challenge().credentialVersion());
+                next.challenge().credentialVersion(), false, 0);
     }
 
     private Decision newChallenge(PlayerAuthSession session) {
@@ -160,7 +161,7 @@ public final class LoginSessionManager implements AutoCloseable {
             failures.increment();
             return Decision.failure(null, AuthFailureReason.ACCOUNT_NOT_FOUND, false, 0);
         }
-        if (!account.get().enabled()) {
+        if (!account.get().enabled() || account.get().banned()) {
             session.fail();
             failures.increment();
             return Decision.failure(null, AuthFailureReason.ACCOUNT_DISABLED, false, 0);
@@ -188,6 +189,16 @@ public final class LoginSessionManager implements AutoCloseable {
         return session != null && session.state() == PlayerAuthState.AUTHENTICATED;
     }
 
+    public boolean completeDeviceVerification(UUID connectionId, UUID sessionId, boolean allowed, Long deviceId) {
+        PlayerAuthSession session = sessions.get(connectionId);
+        if (session == null) return false;
+        boolean completed = session.completeDeviceVerification(sessionId, allowed, deviceId);
+        if (completed) {
+            if (allowed) successes.increment(); else failures.increment();
+        }
+        return completed;
+    }
+
     public Optional<PlayerAuthSession> session(UUID connectionId) {
         return Optional.ofNullable(sessions.get(connectionId));
     }
@@ -213,6 +224,15 @@ public final class LoginSessionManager implements AutoCloseable {
         return (int) sessions.values().stream().filter(s -> s.state() == PlayerAuthState.AUTHENTICATED).count();
     }
 
+    public java.util.Set<UUID> authenticatedConnectionsForDevice(long deviceId) {
+        java.util.Set<UUID> result = new java.util.HashSet<>();
+        sessions.forEach((id, session) -> {
+            if (session.state() == PlayerAuthState.AUTHENTICATED
+                    && java.util.Objects.equals(session.deviceId(), deviceId)) result.add(id);
+        });
+        return java.util.Set.copyOf(result);
+    }
+
     public long successCount() { return successes.sum(); }
     public long failureCount() { return failures.sum(); }
 
@@ -224,18 +244,23 @@ public final class LoginSessionManager implements AutoCloseable {
 
     public record Decision(boolean authenticated, UUID sessionId, AuthFailureReason failure,
                            boolean retryAllowed, int remainingAttempts, AuthChallengePayload challenge,
-                           int credentialVersion) {
+                           int credentialVersion, boolean deviceCheckRequired, long accountId) {
         static Decision success(UUID sessionId, int credentialVersion) {
-            return new Decision(true, sessionId, null, false, 0, null, credentialVersion);
+            return new Decision(true, sessionId, null, false, 0, null, credentialVersion, false, 0);
+        }
+
+        static Decision deviceCheck(UUID sessionId, int credentialVersion, long accountId) {
+            return new Decision(false, sessionId, null, false, 0, null,
+                    credentialVersion, true, accountId);
         }
 
         static Decision challenge(AuthChallengePayload challenge) {
             return new Decision(false, challenge.sessionId(), null, false, 0, challenge,
-                    challenge.credentialVersion());
+                    challenge.credentialVersion(), false, 0);
         }
 
         static Decision failure(UUID sessionId, AuthFailureReason failure, boolean retry, int remaining) {
-            return new Decision(false, sessionId, failure, retry, remaining, null, 0);
+            return new Decision(false, sessionId, failure, retry, remaining, null, 0, false, 0);
         }
     }
 

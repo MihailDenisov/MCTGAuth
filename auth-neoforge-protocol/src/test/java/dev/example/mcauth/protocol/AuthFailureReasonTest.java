@@ -18,6 +18,8 @@ class AuthFailureReasonTest {
                 "PROTOCOL_MISMATCH",
                 "CLIENT_MISSING",
                 "ACCOUNT_DISABLED",
+                "DEVICE_BANNED",
+                "DEVICE_VERIFICATION_UNAVAILABLE",
                 "INTERNAL_AUTH_ERROR",
                 "ACCOUNT_NOT_SYNCHRONIZED",
                 "ACCOUNT_NOT_FOUND",

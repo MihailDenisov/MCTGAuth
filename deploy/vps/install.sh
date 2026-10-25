@@ -46,6 +46,7 @@ if [[ ! -e "${ENV_FILE}" ]]; then
         'HTTP_BIND_ADDRESS=127.0.0.1' \
         'HTTP_PORT=8080' \
         'AUTH_API_TOKEN=replace_with_at_least_32_random_characters' \
+        'DEVICE_FINGERPRINT_SECRET=replace_with_a_separate_random_secret_of_at_least_32_characters' \
         'SERVER_ID=survival-main' \
         'ADMIN_LOCALE=en' \
         'DEFAULT_USER_LOCALE=en' \

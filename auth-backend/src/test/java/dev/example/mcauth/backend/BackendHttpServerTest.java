@@ -21,12 +21,16 @@ class BackendHttpServerTest {
     @Test
     void healthSyncAndCommandEndpointsAreAuthenticatedAndIdempotent() throws Exception {
         ObjectMapper json = new ObjectMapper();
+        DeviceFingerprintService deviceFingerprints;
         try (BackendTestContext context = new BackendTestContext(temporaryDirectory.resolve("http.db"));
              BackendHttpServer server = new BackendHttpServer("127.0.0.1", 0, TOKEN,
                      context.database, () -> false,
                      new SyncApiService(context.syncEvents, "survival-main"), context.commands,
-                     context.telemetry, json)) {
-            context.register(4001L, "HttpPlayer");
+                     context.telemetry,
+                     deviceFingerprints = new DeviceFingerprintService(context.database, context.clock,
+                             "survival-main", "http-test-device-secret-00000000000000",
+                             DeviceFingerprintConfig.defaults()), json)) {
+            long accountId = context.register(4001L, "HttpPlayer");
             var command = context.commands.create(
                     new ModeratorIdentity(BackendTestContext.MODERATOR_ID, "mod"),
                     RemoteCommandType.AUTH_STATUS, "{}");
@@ -37,13 +41,13 @@ class BackendHttpServerTest {
             assertEquals(200, health.statusCode());
             assertEquals("ok", json.readTree(health.body()).path("database").asText());
             assertEquals("stopped", json.readTree(health.body()).path("telegram").asText());
-            assertEquals(7, json.readTree(health.body()).path("schemaVersion").asInt());
+            assertEquals(8, json.readTree(health.body()).path("schemaVersion").asInt());
 
             HttpResponse<String> version = send("GET", base + "/version", null, null);
             assertEquals(200, version.statusCode());
             assertEquals("minecraft-auth-backend",
                     json.readTree(version.body()).path("application").asText());
-            assertEquals(7, json.readTree(version.body()).path("schemaVersion").asInt());
+            assertEquals(8, json.readTree(version.body()).path("schemaVersion").asInt());
 
             assertEquals(401, send("GET", base + "/api/v1/server/events?server_id=survival-main", null, null).statusCode());
             HttpResponse<String> pending = send("GET", base + "/api/v1/server/events?server_id=survival-main", TOKEN, null);
@@ -56,6 +60,19 @@ class BackendHttpServerTest {
             assertEquals(0, json.readTree(send("GET", base + "/api/v1/server/events?server_id=survival-main", TOKEN, null).body()).path("events").size());
 
             assertEquals(403, send("GET", base + "/api/v1/server/commands?server_id=other", TOKEN, null).statusCode());
+            String digest = java.util.Base64.getEncoder().encodeToString(new byte[32]);
+            String observation = """
+                    {"serverId":"survival-main","accountId":%d,"normalizedMinecraftName":"httpplayer",
+                     "fingerprintVersion":1,"signals":[{"type":"SYSTEM_UUID","digest":"%s"}]}
+                    """.formatted(accountId, digest);
+            assertEquals(401, send("POST", base + "/api/v1/server/device-observations", null,
+                    observation).statusCode());
+            assertEquals(400, send("POST", base + "/api/v1/server/device-observations", TOKEN,
+                    observation.replace("SYSTEM_UUID", "UNKNOWN_TYPE")).statusCode());
+            HttpResponse<String> device = send("POST", base + "/api/v1/server/device-observations", TOKEN,
+                    observation);
+            assertEquals(200, device.statusCode());
+            assertEquals("ALLOWED", json.readTree(device.body()).path("decision").asText());
             String heartbeat = heartbeat("2026-09-11T12:00:00Z", 1, 20);
             assertEquals(401, send("POST", base + "/api/v1/servers/heartbeat", null, heartbeat).statusCode());
             assertEquals(200, send("POST", base + "/api/v1/servers/heartbeat", TOKEN, heartbeat).statusCode());

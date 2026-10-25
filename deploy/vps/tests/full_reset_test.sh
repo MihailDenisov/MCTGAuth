@@ -20,6 +20,7 @@ sqlite3 "${database}" <"${ROOT_DIR}/auth-backend/src/main/resources/db/migration
 sqlite3 "${database}" <"${ROOT_DIR}/auth-backend/src/main/resources/db/migration/V005__telemetry_and_bot_blocking.sql"
 sqlite3 "${database}" <"${ROOT_DIR}/auth-backend/src/main/resources/db/migration/V006__ticket_closure_comments.sql"
 sqlite3 "${database}" <"${ROOT_DIR}/auth-backend/src/main/resources/db/migration/V007__chat_tags_and_registration_rejection.sql"
+sqlite3 "${database}" <"${ROOT_DIR}/auth-backend/src/main/resources/db/migration/V008__device_fingerprints_and_bans.sql"
 sqlite3 "${database}" <<'SQL'
 PRAGMA foreign_keys = ON;
 CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, filename TEXT NOT NULL, applied_at TEXT NOT NULL);
@@ -30,7 +31,8 @@ INSERT INTO schema_migrations VALUES
  (4,'V004__telegram_workflow_fixes.sql','2026-09-15T00:00:00Z'),
  (5,'V005__telemetry_and_bot_blocking.sql','2026-09-18T00:00:00Z'),
  (6,'V006__ticket_closure_comments.sql','2026-09-18T00:00:00Z'),
- (7,'V007__chat_tags_and_registration_rejection.sql','2026-10-14T00:00:00Z');
+ (7,'V007__chat_tags_and_registration_rejection.sql','2026-10-14T00:00:00Z'),
+ (8,'V008__device_fingerprints_and_bans.sql','2026-10-25T00:00:00Z');
 INSERT INTO moderators VALUES(1,'admin',1,'2026-09-15T00:00:00Z');
 INSERT INTO moderator_permissions VALUES(1,'ACCOUNT_DISABLE'),(1,'ACCOUNT_ENABLE');
 INSERT INTO users(telegram_id,username_snapshot,account_status,created_at,updated_at,locale)
@@ -69,9 +71,19 @@ INSERT INTO server_status VALUES('server','instance','2026-09-15T00:00:00Z','202
 INSERT INTO player_sessions(join_event_id,server_id,server_instance_id,minecraft_account_id,nickname_snapshot,joined_at)
  VALUES('join','server','instance',1,'PlayerA','2026-09-15T00:00:00Z');
 INSERT INTO telemetry_events VALUES('join','server','instance','PLAYER_JOINED','2026-09-15T00:00:00Z','2026-09-15T00:00:00Z');
+INSERT INTO devices VALUES(1,1,'HIGH','2026-10-25T00:00:00Z','2026-10-25T00:00:00Z','2026-10-25T00:00:00Z');
+INSERT INTO device_signals VALUES(1,'SYSTEM_UUID','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',1,
+ '2026-10-25T00:00:00Z','2026-10-25T00:00:00Z');
+INSERT INTO user_devices VALUES(100,1,'2026-10-25T00:00:00Z','2026-10-25T00:00:00Z',1);
+INSERT INTO account_devices VALUES(1,1,'2026-10-25T00:00:00Z','2026-10-25T00:00:00Z',1);
+INSERT INTO bans(id,ban_type,target_user_id,reason,created_by,created_at,active)
+ VALUES(1,'USER_BAN',100,'fixture ban',1,'2026-10-25T00:00:00Z',1);
+INSERT INTO ban_account_effects VALUES(1,1,1);
+INSERT INTO device_ban_exemptions(user_id,device_id,created_by,created_at,reason,active)
+ VALUES(100,1,1,'2026-10-25T00:00:00Z','fixture exemption',1);
 SQL
 
-printf '%s\n' '{"schemaVersion":1,"accounts":{"playera":{"credentialVerifier":"old-verifier-must-disappear"}},"processedEvents":[{"id":"old"}],"processedRemoteCommands":[]}' >"${cache}"
+printf '%s\n' '{"schemaVersion":2,"accounts":{"playera":{"credentialVerifier":"old-verifier-must-disappear"}},"processedEvents":[{"id":"old"}],"processedRemoteCommands":[],"devices":[{"id":1,"fingerprintVersion":1,"signals":{"SYSTEM_UUID":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}],"bannedDeviceIds":[1]}' >"${cache}"
 cp -- "${cache}" "${cache}.bak"
 cp -- "${cache}" "${cache}.tmp"
 printf '%s\n' '{"schemaVersion":1,"events":[{"eventId":"queued"}]}' >"$(dirname -- "${cache}")/telemetry-events.json"
@@ -87,10 +99,12 @@ clear_minecraft_cache "${cache}" "$(id -un)" "$(id -gn)"
 for table in "${RESET_TABLES[@]}"; do
     [[ "$(sqlite3 "${database}" "SELECT COUNT(*) FROM ${table};")" == "0" ]]
 done
-[[ "$(sqlite3 "${database}" 'SELECT COUNT(*) FROM schema_migrations;')" == "7" ]]
+[[ "$(sqlite3 "${database}" 'SELECT COUNT(*) FROM schema_migrations;')" == "8" ]]
 [[ "$(sqlite3 "${database}" 'SELECT COUNT(*) FROM moderators;')" == "1" ]]
 [[ "$(sqlite3 "${database}" 'SELECT COUNT(*) FROM moderator_permissions;')" == "2" ]]
 [[ "$(jq -r '.accounts | length' "${cache}")" == "0" ]]
+[[ "$(jq -r '.devices | length' "${cache}")" == "0" ]]
+[[ "$(jq -r '.bannedDeviceIds | length' "${cache}")" == "0" ]]
 ! grep -q 'old-verifier-must-disappear' "${cache}"
 ! grep -a -q 'old-verifier-must-disappear' "${database}"
 [[ ! -e "${cache}.bak" && ! -e "${cache}.tmp" ]]

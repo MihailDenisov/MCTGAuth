@@ -15,3 +15,7 @@ The client is passive on every new connection. Singleplayer and servers without 
 MCTGAuth never calls Minecraft connection APIs and never schedules an automatic reconnect. A retryable `INVALID_CREDENTIALS` response opens the password editor and submits another proof over the same connection. Terminal failures stop the authentication lifecycle and invalidate delayed Argon2 work from that connection. The disconnect screen remains until the player explicitly returns or reconnects.
 
 Terminal reasons include `ACCOUNT_NOT_FOUND`, `ACCOUNT_NOT_SYNCHRONIZED`, `ACCOUNT_DISABLED`, `INVALID_CREDENTIALS`, `CREDENTIAL_OUTDATED`, `AUTH_TIMEOUT`, `TOO_MANY_ATTEMPTS`, `PROTOCOL_MISMATCH`, `CLIENT_MISSING`, and safe verification/internal failures. If a new connection appears without an MCTGAuth `Starting reconnect` log entry, it was initiated outside MCTGAuth. MCTGAuth does not add hard dependencies on third-party reconnect mods, which may independently decide to reconnect.
+
+## Device fingerprint privacy
+
+Collection begins only after the current server advertises compatible MCTGAuth protocol 2 and runs on the authentication worker. System UUID, machine ID, motherboard UUID, and disk ID are enabled by default. GPU and MAC are weak opt-in signals and are not queried while disabled. Values are normalized, placeholders are discarded, and a type/domain-bound SHA-256 digest is cached for the process. Raw identifiers are never placed in payloads or logs.

@@ -18,6 +18,7 @@ public final class PlayerAuthSession {
     private Instant expiresAt;
     private int failedAttempts;
     private int credentialVersion;
+    private Long deviceId;
 
     PlayerAuthSession(UUID connectionId, UUID minecraftUuid, String minecraftName,
                       String normalizedIdentity, Instant createdAt) {
@@ -52,6 +53,23 @@ public final class PlayerAuthSession {
         state = PlayerAuthState.AUTHENTICATED;
     }
 
+    public synchronized void devicePending(UUID verifiedSessionId) {
+        clearChallenge();
+        sessionId = verifiedSessionId;
+        state = PlayerAuthState.DEVICE_PENDING;
+    }
+
+    public synchronized boolean completeDeviceVerification(UUID verifiedSessionId, boolean allowed, Long resolvedDeviceId) {
+        if (state != PlayerAuthState.DEVICE_PENDING || !java.util.Objects.equals(sessionId, verifiedSessionId)) {
+            return false;
+        }
+        if (allowed) {
+            deviceId = resolvedDeviceId;
+            authenticate();
+        } else fail();
+        return true;
+    }
+
     public synchronized void timeout() {
         clearChallenge();
         state = PlayerAuthState.TIMED_OUT;
@@ -81,4 +99,5 @@ public final class PlayerAuthSession {
     public synchronized Instant expiresAt() { return expiresAt; }
     public synchronized int failedAttempts() { return failedAttempts; }
     public synchronized int credentialVersion() { return credentialVersion; }
+    public synchronized Long deviceId() { return deviceId; }
 }

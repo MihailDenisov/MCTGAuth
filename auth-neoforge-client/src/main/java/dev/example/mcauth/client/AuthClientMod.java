@@ -32,12 +32,15 @@ public final class AuthClientMod {
     private static final Logger LOGGER = LoggerFactory.getLogger(AuthClientMod.class);
     private final AuthNetworkClient controller;
     private final MCTGAuthClientConfig config;
+    private final DeviceFingerprintCollector fingerprintCollector;
     private volatile boolean storedPasswordRejected;
 
     public AuthClientMod(IEventBus modBus, ModContainer container) {
         config = new MCTGAuthClientConfig(FMLPaths.CONFIGDIR.get().resolve(MCTGAuthClientConfig.FILE_NAME));
         config.load();
-        controller = new AuthNetworkClient(this::scheduleAuthResponse);
+        fingerprintCollector = new DeviceFingerprintCollector(new PlatformDeviceSignalProvider());
+        controller = new AuthNetworkClient(this::scheduleAuthResponse,
+                () -> fingerprintCollector.collect(config.enabledDeviceSignals()));
         container.registerExtensionPoint(IConfigScreenFactory.class,
                 (ignored, parent) -> new MCTGAuthSettingsScreen(parent, config));
         modBus.addListener(this::registerPayloads);

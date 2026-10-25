@@ -8,7 +8,7 @@ import java.util.UUID;
 
 public record AuthAccount(long accountId, String minecraftName, String normalizedName, UUID minecraftUuid,
                           String credentialVerifier, int credentialVersion, boolean enabled,
-                          boolean licensed, Instant updatedAt) {
+                          boolean banned, boolean licensed, Instant updatedAt) {
     public AuthAccount {
         if (accountId <= 0 || credentialVersion <= 0) throw new IllegalArgumentException("Invalid account version");
         Objects.requireNonNull(minecraftName, "minecraftName");
@@ -20,10 +20,18 @@ public record AuthAccount(long accountId, String minecraftName, String normalize
         }
     }
 
+    public AuthAccount(long accountId, String minecraftName, String normalizedName, UUID minecraftUuid,
+                       String credentialVerifier, int credentialVersion, boolean enabled,
+                       boolean licensed, Instant updatedAt) {
+        this(accountId, minecraftName, normalizedName, minecraftUuid, credentialVerifier,
+                credentialVersion, enabled, false, licensed, updatedAt);
+    }
+
     @Override
     public String toString() {
         return "AuthAccount[accountId=" + accountId + ", minecraftName=" + minecraftName
                 + ", credentialVersion=" + credentialVersion + ", enabled=" + enabled
+                + ", banned=" + banned
                 + ", licensed=" + licensed + ", updatedAt=" + updatedAt + "]";
     }
 }

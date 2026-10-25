@@ -23,6 +23,9 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.Base64;
+import dev.example.mcauth.protocol.DeviceFingerprint;
+import dev.example.mcauth.protocol.DeviceSignal;
 
 public final class BackendSyncClient implements SyncBackend {
     private static final int MAX_RESPONSE_BYTES = 1_048_576;
@@ -97,6 +100,41 @@ public final class BackendSyncClient implements SyncBackend {
                 body.toString().getBytes(StandardCharsets.UTF_8));
     }
 
+    public DeviceVerdict evaluateDevice(long accountId, String normalizedMinecraftName,
+                                        DeviceFingerprint fingerprint)
+            throws IOException, InterruptedException {
+        if (accountId <= 0 || normalizedMinecraftName == null || fingerprint == null) {
+            throw new IllegalArgumentException("Invalid device observation");
+        }
+        JsonObject body = new JsonObject();
+        body.addProperty("serverId", config.serverId());
+        body.addProperty("accountId", accountId);
+        body.addProperty("normalizedMinecraftName", normalizedMinecraftName);
+        body.addProperty("fingerprintVersion", fingerprint.fingerprintVersion());
+        JsonArray signals = new JsonArray();
+        for (DeviceSignal signal : fingerprint.signals()) {
+            JsonObject item = new JsonObject();
+            item.addProperty("type", signal.type().name());
+            item.addProperty("digest", Base64.getEncoder().encodeToString(signal.digest()));
+            signals.add(item);
+        }
+        body.add("signals", signals);
+        JsonObject response = send("POST", "/api/v1/server/device-observations",
+                body.toString().getBytes(StandardCharsets.UTF_8));
+        try {
+            long deviceId = response.has("deviceId") ? response.get("deviceId").getAsLong() : -1;
+            String decision = requiredText(response, "decision", 32);
+            String confidence = requiredText(response, "confidence", 16);
+            int version = requiredPositiveInt(response, "fingerprintVersion");
+            if (deviceId <= 0 || version != fingerprint.fingerprintVersion()) {
+                throw new IllegalArgumentException("Invalid backend device verdict");
+            }
+            return new DeviceVerdict(deviceId, DeviceDecision.valueOf(decision), confidence);
+        } catch (RuntimeException exception) {
+            throw new IOException("Invalid backend device verdict", exception);
+        }
+    }
+
     JsonObject send(String method, String path, byte[] body) throws IOException, InterruptedException {
         String query = "server_id=" + URLEncoder.encode(config.serverId(), StandardCharsets.UTF_8);
         URI uri = config.baseUrl().resolve(path + "?" + query);
@@ -155,4 +193,7 @@ public final class BackendSyncClient implements SyncBackend {
     }
 
     @Override public void close() { Arrays.fill(token, '\0'); }
+
+    public record DeviceVerdict(long deviceId, DeviceDecision decision, String confidence) { }
+    public enum DeviceDecision { ALLOWED, USER_BANNED, DEVICE_BANNED }
 }

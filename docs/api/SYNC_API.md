@@ -6,10 +6,11 @@ Implemented endpoints:
 
 - `GET /api/v1/server/events?server_id=<server-id>` — return up to 100 unacknowledged events.
 - `POST /api/v1/server/events/{id}/ack` — acknowledge durable local application.
+- `POST /api/v1/server/device-observations` — resolve a post-proof, versioned digest set and return an opaque device ID, confidence, and policy decision.
 - `GET /health` — local/backend health check.
 - `GET /version` — public-safe build and database-schema metadata for local deployment diagnostics.
 
-The ACK endpoint also requires `server_id` as a query parameter. Both synchronization endpoints require `Authorization: Bearer <AUTH_API_TOKEN>`. Repeated GET and ACK requests are safe; acknowledged events remain stored and are no longer returned by the pending query.
+The ACK endpoint also requires `server_id` as a query parameter. Synchronization and device-observation endpoints require `Authorization: Bearer <AUTH_API_TOKEN>`. Repeated GET and ACK requests are safe; acknowledged events remain stored and are no longer returned by the pending query. Device observations accept only allowlisted unique 32-byte client digests, require a strong signal while enabled, and never accept raw hardware values.
 
 The application accepts only its configured `SERVER_ID`. The embedded Java server is restricted to a loopback bind address and should be exposed only through HTTPS termination such as Caddy.
 

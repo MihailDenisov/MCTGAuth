@@ -4,7 +4,7 @@
 
 MCTGAuth — система авторизации и поддержки на Java 21 для Minecraft 1.21.1 и NeoForge 21.1.244. Telegram-бот управляет регистрацией, владельцами аккаунтов, обращениями, модерацией и сменой паролей; отдельные клиентский и серверный моды выполняют защищённую от повторного воспроизведения авторизацию без передачи пароля в открытом виде.
 
-Текущая версия: **0.6.4**.
+Текущая версия: **0.6.5**.
 
 ## Архитектура
 
@@ -33,6 +33,8 @@ flowchart TD
 Версия 0.6.3 была backend-only сборкой ветки исходного кода 0.6.2; схема осталась 6, протокол — 1. См. [примечания к выпуску 0.6.3](docs/RELEASE_NOTES_0.6.3_RU.md).
 
 Версия 0.6.4 добавляет добровольно выбираемые Telegram-теги из принадлежащего пользователю Minecraft-аккаунта, необязательную причину отклонения заявки на регистрацию, точные локализованные ошибки авторизации и структурированную диагностику `RESYNC_PLAYER`. Версия wire-протокола остаётся 1, схема backend обновляется до 7. См. [примечания к выпуску 0.6.4](docs/RELEASE_NOTES_0.6.4_RU.md).
+
+Версия 0.6.5 добавляет псевдонимизированные отпечатки устройств, подтверждаемые модератором прямые связанные блокировки, явные блокировки устройств, безопасное снятие блокировок/исключения и офлайн-проверку ранее известных заблокированных устройств. Wire-протокол обновлён до 2, схема backend — до 8. Backend никогда не хранит исходные аппаратные идентификаторы. См. [примечания к выпуску 0.6.5](docs/RELEASE_NOTES_0.6.5_RU.md).
 
 Пароль намеренно хранится открытым текстом только в отдельном локальном JSON-конфиге клиента. Backend и Minecraft-сервер не хранят этот пароль. Нельзя журналировать пароли, API-токены, заголовки Authorization, верификаторы или повторно используемые доказательства.
 
@@ -75,9 +77,9 @@ java -version
 ## Release-артефакты
 
 ```text
-auth-backend/build/distributions/auth-backend-0.6.4.tar.gz
-auth-neoforge-server/build/libs/mctgauth-server-0.6.4.jar
-auth-neoforge-client/build/libs/mctgauth-client-0.6.4.jar
+auth-backend/build/distributions/auth-backend-0.6.5.tar.gz
+auth-neoforge-server/build/libs/mctgauth-server-0.6.5.jar
+auth-neoforge-client/build/libs/mctgauth-client-0.6.5.jar
 ```
 
 ```powershell
@@ -101,6 +103,8 @@ auth-neoforge-client/build/libs/mctgauth-client-0.6.4.jar
 - [Примечания к выпуску 0.6.3](docs/RELEASE_NOTES_0.6.3_RU.md) · [English](docs/RELEASE_NOTES_0.6.3.md)
 - [Переход с 0.6.3 на 0.6.4](docs/MIGRATION_0.6.3_TO_0.6.4_RU.md) · [English](docs/MIGRATION_0.6.3_TO_0.6.4.md)
 - [Примечания к выпуску 0.6.4](docs/RELEASE_NOTES_0.6.4_RU.md) · [English](docs/RELEASE_NOTES_0.6.4.md)
+- [Переход с 0.6.4 на 0.6.5](docs/MIGRATION_0.6.4_TO_0.6.5_RU.md) · [English](docs/MIGRATION_0.6.4_TO_0.6.5.md)
+- [Примечания к выпуску 0.6.5](docs/RELEASE_NOTES_0.6.5_RU.md) · [English](docs/RELEASE_NOTES_0.6.5.md)
 - [API телеметрии](docs/api/TELEMETRY_API_RU.md) · [English](docs/api/TELEMETRY_API.md)
 - [Архитектура и ответственность](docs/PROJECT_LOGIC.md)
 - [Модель безопасности](docs/architecture/SECURITY_MODEL.md)
