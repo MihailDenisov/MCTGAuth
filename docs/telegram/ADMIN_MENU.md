@@ -2,6 +2,8 @@
 
 Enabled moderators receive the administration entry in their stored private-chat locale. Every action re-checks the actor's numeric Telegram ID and backend permission; localized button visibility is not authorization.
 
+Backend 0.6.6 keeps a separate transient administration message for each moderator, chat, and admin-UI context. `/adm`, requests, search, pagination, account details, and device/ban screens edit that message. A moderator cannot operate another moderator's navigation message. User and admin sessions remain separate even in the same private chat; persistent ticket cards and user-visible moderation notices are not navigation state.
+
 `/adm` opens this menu in private chat and the inline shared panel in the configured admin group. In private chat, `/menu` always opens the ordinary user-facing main menu, including for moderators. The `Main menu` / `Главное меню` action has the same behavior; `Admin menu` / `Меню администратора` is the separate administrative home action. Both `/command` and `/command@ConfiguredBotUsername` forms are supported; commands addressed to another bot are ignored.
 
 English private menu:

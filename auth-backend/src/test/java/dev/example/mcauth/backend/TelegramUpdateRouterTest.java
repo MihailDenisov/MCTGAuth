@@ -17,11 +17,90 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TelegramUpdateRouterTest {
     private static final long ADMIN_CHAT_ID = -1001L;
     @TempDir Path temporaryDirectory;
+
+    @Test
+    void normalUserScreensReuseOneNavigationMessage() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        try (BackendTestContext context = new BackendTestContext(temporaryDirectory.resolve("single-user-ui.db"))) {
+            FakeTelegramClient telegram = new FakeTelegramClient();
+            LocalizationService localization = new LocalizationService(ZoneOffset.UTC);
+            LocaleResolver locales = new LocaleResolver(context.database, BotLocale.ENGLISH, BotLocale.ENGLISH);
+            TelegramUpdateRouter router = router(telegram, json, context, localization, locales);
+            long userId = 4901L;
+            context.register(userId, "SingleMsgPlayer");
+
+            router.handle(message(json, userId, "single", "en", "/menu"));
+            router.handle(message(json, userId, "single", "en",
+                    localization.text(BotLocale.ENGLISH, MessageKey.MENU_SETTINGS)));
+            router.handle(message(json, userId, "single", "en",
+                    localization.text(BotLocale.ENGLISH, MessageKey.MENU_MY_ACCOUNT)));
+            router.handle(message(json, userId, "single", "en",
+                    localization.text(BotLocale.ENGLISH, MessageKey.MENU_SERVER_INFORMATION)));
+            router.handle(message(json, userId, "single", "en",
+                    localization.text(BotLocale.ENGLISH, MessageKey.BUTTON_BACK)));
+
+            assertEquals(1, telegram.sent.size());
+            assertEquals(4, telegram.edits);
+            assertTrue(telegram.lastForChat(userId).markup().toString().contains("My account"));
+        }
+    }
+
+    @Test
+    void passwordSecretIsStandaloneAndNeverBecomesNavigation() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        try (BackendTestContext context = new BackendTestContext(temporaryDirectory.resolve("secret-ui.db"))) {
+            FakeTelegramClient telegram = new FakeTelegramClient();
+            LocalizationService localization = new LocalizationService(ZoneOffset.UTC);
+            LocaleResolver locales = new LocaleResolver(context.database, BotLocale.ENGLISH, BotLocale.ENGLISH);
+            TelegramUpdateRouter router = router(telegram, json, context, localization, locales);
+            long userId = 4902L;
+            long accountId = context.register(userId, "SecretPlayer");
+
+            router.handle(message(json, userId, "secret", "en", "/menu"));
+            router.handle(message(json, userId, "secret", "en",
+                    localization.text(BotLocale.ENGLISH, MessageKey.MENU_CHANGE_PASSWORD)));
+            router.handle(callback(json, userId, "secret", "account:" + accountId + ":password"));
+            router.handle(callback(json, userId, "secret", "account:" + accountId + ":password_confirm"));
+            assertEquals(2, telegram.sent.size());
+            String secretText = telegram.sent.get(1).text();
+
+            router.handle(message(json, userId, "secret", "en", "/menu"));
+
+            assertEquals(2, telegram.sent.size());
+            assertEquals(secretText, telegram.sent.get(1).text());
+            assertNotEquals(secretText, telegram.sent.getFirst().text());
+        }
+    }
+
+    @Test
+    void moderatorUserAndAdminNavigationAreIndependentPerModerator() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        try (BackendTestContext context = new BackendTestContext(temporaryDirectory.resolve("admin-ui-sessions.db"))) {
+            long secondModerator = 1002L;
+            context.moderators.synchronizeConfiguredModerators(
+                    java.util.Set.of(BackendTestContext.MODERATOR_ID, secondModerator));
+            FakeTelegramClient telegram = new FakeTelegramClient();
+            LocalizationService localization = new LocalizationService(ZoneOffset.UTC);
+            LocaleResolver locales = new LocaleResolver(context.database, BotLocale.ENGLISH, BotLocale.ENGLISH);
+            TelegramUpdateRouter router = router(telegram, json, context, localization, locales);
+
+            router.handle(message(json, BackendTestContext.MODERATOR_ID, "moderator", "en", "/menu"));
+            router.handle(message(json, BackendTestContext.MODERATOR_ID, "moderator", "en", "/adm"));
+            router.handle(message(json, BackendTestContext.MODERATOR_ID, "moderator", "en", "/menu"));
+            router.handle(message(json, secondModerator, "moderator2", "en", "/adm"));
+
+            assertEquals(3, telegram.sent.size());
+            assertTrue(telegram.sent.getFirst().markup().toString().contains("Apply for registration"));
+            assertTrue(telegram.sent.get(1).markup().toString().contains("Requests"));
+            assertTrue(telegram.sent.get(2).markup().toString().contains("Requests"));
+        }
+    }
 
     @Test
     void newUserCanSelectRussianAndPreferencePersists() throws Exception {
@@ -180,13 +259,14 @@ class TelegramUpdateRouterTest {
             router.handle(message(json, BackendTestContext.MODERATOR_ID,
                     "moderator", "en", localization.text(
                             BotLocale.ENGLISH, MessageKey.BUTTON_MAIN_MENU)));
-            assertTrue(telegram.last().markup().toString().contains("Apply for registration"));
-            assertFalse(telegram.last().markup().toString().contains("New tickets"));
+            assertTrue(telegram.sent.get(1).markup().toString().contains("Apply for registration"));
+            assertFalse(telegram.sent.get(1).markup().toString().contains("New tickets"));
 
             router.handle(groupMessage(json, BackendTestContext.MODERATOR_ID,
                     "moderator", "/menu@ExampleBot"));
             assertEquals(ADMIN_CHAT_ID, telegram.last().chatId());
-            assertTrue(telegram.last().markup().has("inline_keyboard"));
+            assertTrue(telegram.last().markup().toString().contains("Apply for registration"));
+            assertFalse(telegram.last().markup().toString().contains("Requests"));
 
             router.handle(groupMessage(json, BackendTestContext.MODERATOR_ID,
                     "moderator", "/adm@ExampleBot"));
@@ -851,6 +931,10 @@ class TelegramUpdateRouterTest {
         private boolean tagFailure;
         private String tag = "";
         private int tagUpdates;
+        private int edits;
+        private int deletes;
+        private SentMessage lastTouched;
+        private final java.util.Map<Long, SentMessage> lastTouchedByChat = new java.util.HashMap<>();
 
         @Override public List<JsonNode> getUpdates(long offset) { return List.of(); }
 
@@ -871,11 +955,31 @@ class TelegramUpdateRouterTest {
         }
 
         @Override public long sendMessage(long chatId, String text, JsonNode replyMarkup) {
-            sent.add(new SentMessage(chatId, text, replyMarkup));
+            SentMessage message = new SentMessage(chatId, text, replyMarkup);
+            sent.add(message);
+            lastTouched = message;
+            lastTouchedByChat.put(chatId, message);
             return sent.size();
         }
 
-        @Override public void editMessage(long chatId, long messageId, String text) { }
+        @Override public void editMessage(long chatId, long messageId, String text) {
+            editMessage(chatId, messageId, text, null);
+        }
+
+        @Override public void editMessage(long chatId, long messageId, String text, JsonNode replyMarkup) {
+            edits++;
+            int index = Math.toIntExact(messageId - 1);
+            if (index >= 0 && index < sent.size() && sent.get(index).chatId() == chatId) {
+                SentMessage current = sent.get(index);
+                SentMessage edited = new SentMessage(chatId, text,
+                        replyMarkup == null ? current.markup() : replyMarkup);
+                sent.set(index, edited);
+                lastTouched = edited;
+                lastTouchedByChat.put(chatId, edited);
+            }
+        }
+
+        @Override public void deleteMessage(long chatId, long messageId) { deletes++; }
 
         @Override public void answerCallback(String callbackQueryId, String text) { }
 

@@ -1,5 +1,22 @@
 # Changelog
 
+## Backend 0.6.6 - 2026-10-25
+
+### Changed
+
+- Telegram user navigation now edits one active message per numeric user and chat.
+- Administration navigation now edits one independent active message per moderator and chat.
+- Back, pagination, account/ticket views, and device/ban administration use the same navigation projection.
+- Deleted or stale navigation messages recover with exactly one replacement; Telegram's `message is not modified` response is a harmless no-op.
+- Temporary moderator input is deleted after successful processing when Telegram permissions allow.
+
+### Security and compatibility
+
+- Passwords remain standalone sensitive messages and can never become navigation state; completed registration and ticket notices remain standalone.
+- Callback ownership is bound to the numeric Telegram identity recorded for each navigation message; database authorization and idempotent transitions remain authoritative.
+- Backend 0.6.6 requires the already-upgraded 0.6.5 client/server mods. Protocol remains 2, schema remains 8, and fingerprint format remains 1.
+- No Minecraft mod update is required from a complete 0.6.5 deployment.
+
 ## 0.6.5 - 2026-10-25
 
 ### Added

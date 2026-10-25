@@ -46,6 +46,7 @@ final class TelegramUpdateRouter {
     private final LocaleResolver locales;
     private final MenuActionRouter actions;
     private final TelegramKeyboards keyboards;
+    private final TelegramUiService ui;
     private final Map<Long, FlowSession> sessions = new ConcurrentHashMap<>();
 
     TelegramUpdateRouter(
@@ -108,6 +109,7 @@ final class TelegramUpdateRouter {
         this.locales = locales;
         this.actions = new MenuActionRouter(localization);
         this.keyboards = new TelegramKeyboards(json, localization, features);
+        this.ui = new TelegramUiService(telegram);
     }
 
     void handle(JsonNode update) throws IOException, InterruptedException {
@@ -138,6 +140,7 @@ final class TelegramUpdateRouter {
         if (telegramId <= 0 || chatId == 0 || (!privateChat && !adminGroup)) return;
         String username = from.path("username").asText("");
         String text = message.path("text").asText("").strip();
+        long sourceMessageId = message.path("message_id").asLong();
         BotLocale suggestion = BotLocale.suggested(
                 from.path("language_code").asText(""), locales.defaultUserLocale());
         boolean newUser = accounts.touchTelegramUser(telegramId, username, suggestion.code());
@@ -158,11 +161,15 @@ final class TelegramUpdateRouter {
                     || "/cancel".equals(parsedCommand)) {
                 pendingModeratorActions.clear(telegramId);
                 sessions.remove(telegramId);
+                if ("/menu".equals(parsedCommand)) {
+                    showMainMenu(chatId, telegramId, MessageKey.MAIN_WELCOME);
+                    return;
+                }
                 try {
                     requireModerator(telegramId);
                     MessageKey heading = "/cancel".equals(parsedCommand)
                             ? MessageKey.ACTION_CANCELLED : MessageKey.ADMIN_TITLE;
-                    telegram.sendMessage(chatId, t(locale, heading),
+                    adminScreen(telegramId, chatId, "admin:main", t(locale, heading),
                             keyboards.adminInlineMenu(locale));
                 } catch (WorkflowException exception) {
                     telegram.sendMessage(chatId, localizedError(locale, exception), null);
@@ -176,8 +183,9 @@ final class TelegramUpdateRouter {
             sessions.remove(telegramId);
             pendingModeratorActions.clear(telegramId);
             if (administrative && moderators.isEnabled(telegramId)) {
-                telegram.sendMessage(chatId, t(locale, MessageKey.ACTION_CANCELLED),
-                        keyboards.adminMenu(locale));
+                adminScreen(telegramId, chatId, "admin:main",
+                        t(locale, MessageKey.ACTION_CANCELLED), keyboards.adminMenu(locale));
+                ui.deleteTemporaryAdminInput(chatId, sourceMessageId);
             } else {
                 showMainMenu(chatId, telegramId, MessageKey.ACTION_CANCELLED);
             }
@@ -199,6 +207,7 @@ final class TelegramUpdateRouter {
         if (session == null && pending.isPresent()) {
             try {
                 completeModeratorPending(chatId, telegramId, username, text, pending.get(), locale);
+                ui.deleteTemporaryAdminInput(chatId, sourceMessageId);
             } catch (WorkflowException | IllegalArgumentException exception) {
                 if (exception instanceof WorkflowException workflow
                         && (workflow.code() == WorkflowException.Code.INVALID_STATE
@@ -216,7 +225,9 @@ final class TelegramUpdateRouter {
             return;
         }
         try {
+            boolean temporaryAdminInput = isAdministrativeContext(telegramId);
             advance(chatId, telegramId, username, text, message, session, action.orElse(null), locale);
+            if (temporaryAdminInput) ui.deleteTemporaryAdminInput(chatId, sourceMessageId);
         } catch (WorkflowException | IllegalArgumentException exception) {
             telegram.sendMessage(chatId, localizedError(locale, exception), null);
         }
@@ -230,7 +241,7 @@ final class TelegramUpdateRouter {
         if ("/start".equals(command) || "/menu".equals(command) || action == BotAction.MAIN_MENU) {
             sessions.remove(telegramId);
             pendingModeratorActions.clear(telegramId);
-            if (newUser && "/start".equals(command)) showLanguageSelector(chatId);
+            if (newUser && "/start".equals(command)) showLanguageSelector(chatId, telegramId);
             else showMainMenu(chatId, telegramId, MessageKey.MAIN_WELCOME);
             return true;
         }
@@ -239,7 +250,8 @@ final class TelegramUpdateRouter {
             sessions.remove(telegramId);
             pendingModeratorActions.clear(telegramId);
             requireModerator(telegramId);
-            telegram.sendMessage(chatId, t(locale, MessageKey.ADMIN_TITLE), keyboards.adminMenu(locale));
+            adminScreen(telegramId, chatId, "admin:main",
+                    t(locale, MessageKey.ADMIN_TITLE), keyboards.adminMenu(locale));
             return true;
         }
         if (action == BotAction.BACK) {
@@ -263,7 +275,7 @@ final class TelegramUpdateRouter {
                     .map(ticket -> t(locale, MessageKey.REG_STATUS_PENDING,
                             Long.toString(ticket.id()), ticketStatus(locale, ticket.status())))
                     .orElseGet(() -> t(locale, MessageKey.REG_STATUS_NONE));
-            telegram.sendMessage(chatId, status,
+            userScreen(telegramId, chatId, "user:registration-status", status,
                     keyboards.userMenu(locale, false, moderators.isEnabled(telegramId)));
             return true;
         }
@@ -274,20 +286,20 @@ final class TelegramUpdateRouter {
         if (action == BotAction.SERVER_INFORMATION) {
             requireRegistered(telegramId);
             sessions.put(telegramId, new FlowSession(FlowKind.SERVER_INFORMATION));
-            telegram.sendMessage(chatId, t(locale, MessageKey.SERVER_INFORMATION_TITLE),
-                    keyboards.serverInformationMenu(locale));
+            userScreen(telegramId, chatId, "user:server-information",
+                    t(locale, MessageKey.SERVER_INFORMATION_TITLE), keyboards.serverInformationMenu(locale));
             return true;
         }
         if (action == BotAction.SERVER_STATUS && features.serverStatusEnabled()) {
-            showServerStatus(chatId, locale);
+            showServerStatus(chatId, telegramId, locale);
             return true;
         }
         if (action == BotAction.SERVER_MAP && features.serverMapUrl() != null) {
-            showServerMap(chatId, locale);
+            showServerMap(chatId, telegramId, locale);
             return true;
         }
         if (action == BotAction.MODPACK_DOWNLOAD && features.modpackDownloadUrl() != null) {
-            showModpackDownload(chatId, locale);
+            showModpackDownload(chatId, telegramId, locale);
             return true;
         }
         if (action == BotAction.REPORT_PROBLEM) {
@@ -310,13 +322,15 @@ final class TelegramUpdateRouter {
         }
         if (action == BotAction.SETTINGS) {
             sessions.remove(telegramId);
-            telegram.sendMessage(chatId, t(locale, MessageKey.SETTINGS_TITLE), keyboards.settingsMenu(locale));
+            userScreen(telegramId, chatId, "user:settings",
+                    t(locale, MessageKey.SETTINGS_TITLE), keyboards.settingsMenu(locale));
             return true;
         }
         if (action == BotAction.ADD_ACCOUNT) {
             requireRegistered(telegramId);
             sessions.put(telegramId, new FlowSession(FlowKind.ADD_NICKNAME));
-            telegram.sendMessage(chatId, t(locale, MessageKey.ADD_NICKNAME), keyboards.wizard(locale, false));
+            userScreen(telegramId, chatId, "user:add-account:nickname",
+                    t(locale, MessageKey.ADD_NICKNAME), keyboards.wizard(locale, false));
             return true;
         }
         if (action == BotAction.CHANGE_PASSWORD) {
@@ -337,7 +351,8 @@ final class TelegramUpdateRouter {
             BotAction action, BotLocale locale) throws IOException, InterruptedException {
         ModeratorIdentity moderator = new ModeratorIdentity(telegramId, username);
         if (action == BotAction.REQUESTS) {
-            telegram.sendMessage(chatId, t(locale, MessageKey.MENU_REQUESTS), keyboards.requestsMenu(locale));
+            adminScreen(telegramId, chatId, "admin:requests",
+                    t(locale, MessageKey.MENU_REQUESTS), keyboards.requestsMenu(locale));
             return true;
         }
         if (action == BotAction.PLAYER_STATISTICS) {
@@ -365,8 +380,8 @@ final class TelegramUpdateRouter {
         }
         if (action == BotAction.SEARCH) {
             sessions.put(telegramId, new FlowSession(FlowKind.ADMIN_SEARCH));
-            telegram.sendMessage(chatId, t(locale, MessageKey.ADMIN_SEARCH_PROMPT),
-                    keyboards.wizard(locale, true));
+            adminScreen(telegramId, chatId, "admin:search",
+                    t(locale, MessageKey.ADMIN_SEARCH_PROMPT), keyboards.wizard(locale, true));
             return true;
         }
         if ("/search".equals(command) && text.contains(" ")) {
@@ -378,20 +393,21 @@ final class TelegramUpdateRouter {
             return true;
         }
         if (action == BotAction.STATISTICS) {
-            telegram.sendMessage(chatId, formatStatistics(tickets.statistics(moderator), locale),
-                    keyboards.adminMenu(locale)); return true;
+            adminScreen(telegramId, chatId, "admin:statistics",
+                    formatStatistics(tickets.statistics(moderator), locale), keyboards.adminMenu(locale)); return true;
         }
         if (action == BotAction.MANUAL_ACCOUNT) {
             sessions.put(telegramId, new FlowSession(FlowKind.MANUAL_OWNER));
-            telegram.sendMessage(chatId, t(locale, MessageKey.MANUAL_OWNER),
-                    keyboards.wizard(locale, true)); return true;
+            adminScreen(telegramId, chatId, "admin:manual-account:owner",
+                    t(locale, MessageKey.MANUAL_OWNER), keyboards.wizard(locale, true)); return true;
         }
         if (action == BotAction.SERVER_MANAGEMENT) {
-            telegram.sendMessage(chatId, t(locale, MessageKey.SERVER_TITLE, serverId),
-                    keyboards.serverMenu(locale)); return true;
+            adminScreen(telegramId, chatId, "admin:server",
+                    t(locale, MessageKey.SERVER_TITLE, serverId), keyboards.serverMenu(locale)); return true;
         }
         if (action == BotAction.FORCE_SYNC) {
-            telegram.sendMessage(chatId, t(locale, MessageKey.SERVER_FORCE_CONFIRM, serverId),
+            adminScreen(telegramId, chatId, "admin:server:force-confirm",
+                    t(locale, MessageKey.SERVER_FORCE_CONFIRM, serverId),
                     keyboards.inline(new String[][]{
                             {t(locale, MessageKey.BUTTON_CONFIRM), "remote:force:confirm"},
                             {t(locale, MessageKey.BUTTON_CANCEL), "remote:cancel"}}));
@@ -399,18 +415,19 @@ final class TelegramUpdateRouter {
         }
         if (action == BotAction.AUTH_STATUS) {
             RemoteCommand queued = commands.create(moderator, RemoteCommandType.AUTH_STATUS, "{}");
-            telegram.sendMessage(chatId, formatCommand(queued, locale), keyboards.serverMenu(locale)); return true;
+            adminScreen(telegramId, chatId, "admin:server:command",
+                    formatCommand(queued, locale), keyboards.serverMenu(locale)); return true;
         }
         if (action == BotAction.RESYNC_PLAYER) {
             sessions.put(telegramId, new FlowSession(FlowKind.RESYNC_ACCOUNT));
-            telegram.sendMessage(chatId, t(locale, MessageKey.SERVER_RESYNC_ACCOUNT),
-                    keyboards.wizard(locale, true));
+            adminScreen(telegramId, chatId, "admin:server:resync",
+                    t(locale, MessageKey.SERVER_RESYNC_ACCOUNT), keyboards.wizard(locale, true));
             return true;
         }
         if (action == BotAction.SYNC_MEMBER_TAGS) {
             moderators.requirePermission(moderator, ModeratorPermission.TELEGRAM_MEMBER_TAG_SYNC);
             TagSyncStatistics statistics = synchronizeAllChatTags();
-            telegram.sendMessage(chatId, t(locale, MessageKey.CHAT_TAG_SYNC_RESULT,
+            adminScreen(telegramId, chatId, "admin:server:tag-sync", t(locale, MessageKey.CHAT_TAG_SYNC_RESULT,
                     statistics.processed(), statistics.updated(), statistics.cleared(),
                     statistics.skippedAdministrators(), statistics.notMembers(), statistics.failed()),
                     keyboards.serverMenu(locale));
@@ -430,22 +447,23 @@ final class TelegramUpdateRouter {
             }
             case REG_NICKNAME -> {
                 session.put("nickname", text); session.kind = FlowKind.REG_LICENSE;
-                yesNo(chatId, locale, MessageKey.REG_LICENSE);
+                yesNo(chatId, telegramId, locale, MessageKey.REG_LICENSE);
             }
             case REG_LICENSE -> {
                 session.put("licensed", parseYesNo(action)); session.kind = FlowKind.REG_AGE;
-                telegram.sendMessage(chatId, t(locale, MessageKey.REG_AGE), keyboards.wizard(locale, false));
+                flowScreen(chatId, telegramId, session.kind,
+                        t(locale, MessageKey.REG_AGE), keyboards.wizard(locale, false));
             }
             case REG_AGE -> {
                 int age = Integer.parseInt(text);
                 if (age < 1 || age > 120) throw new LocalizedUiException(MessageKey.REG_AGE_INVALID);
                 session.put("age", text); session.kind = FlowKind.REG_EXPERIENCE;
-                telegram.sendMessage(chatId, t(locale, MessageKey.REG_EXPERIENCE),
-                        keyboards.wizard(locale, false));
+                flowScreen(chatId, telegramId, session.kind,
+                        t(locale, MessageKey.REG_EXPERIENCE), keyboards.wizard(locale, false));
             }
             case REG_EXPERIENCE -> {
                 session.put("experience", text); session.kind = FlowKind.REG_CONFIRM;
-                yesNo(chatId, locale, MessageKey.REG_CONFIRM,
+                yesNo(chatId, telegramId, locale, MessageKey.REG_CONFIRM,
                         username == null || username.isBlank() ? Long.toString(telegramId) : "@" + username,
                         session.get("nickname"), yesNoLabel(locale, Boolean.parseBoolean(session.get("licensed"))),
                         session.get("age"), session.get("experience"));
@@ -454,69 +472,69 @@ final class TelegramUpdateRouter {
                     chatId, telegramId, username, session, parseYesNo(action), locale);
             case PROBLEM_ACCOUNT -> {
                 session.put("accountId", positiveLong(text)); session.kind = FlowKind.PROBLEM_DESCRIPTION;
-                telegram.sendMessage(chatId, t(locale, MessageKey.PROBLEM_DESCRIPTION),
-                        keyboards.wizard(locale, false));
+                flowScreen(chatId, telegramId, session.kind,
+                        t(locale, MessageKey.PROBLEM_DESCRIPTION), keyboards.wizard(locale, false));
             }
             case PROBLEM_DESCRIPTION -> {
                 session.put("description", text); session.kind = FlowKind.PROBLEM_ATTACHMENTS;
-                telegram.sendMessage(chatId, t(locale, MessageKey.PROBLEM_ATTACHMENTS),
-                        keyboards.attachmentMenu(locale));
+                flowScreen(chatId, telegramId, session.kind,
+                        t(locale, MessageKey.PROBLEM_ATTACHMENTS), keyboards.attachmentMenu(locale));
             }
             case PROBLEM_ATTACHMENTS ->
                     collectOrSubmit(chatId, telegramId, username, message, session, false, action, locale);
             case VIOLATION_ACCOUNT -> {
                 session.put("accountId", positiveLong(text)); session.kind = FlowKind.VIOLATION_OFFENDER_KNOWN;
-                telegram.sendMessage(chatId, t(locale, MessageKey.VIOLATION_OFFENDER_KNOWN),
-                        keyboards.offenderKnown(locale));
+                flowScreen(chatId, telegramId, session.kind,
+                        t(locale, MessageKey.VIOLATION_OFFENDER_KNOWN), keyboards.offenderKnown(locale));
             }
             case VIOLATION_OFFENDER_KNOWN -> {
                 if (action == BotAction.YES) {
                     session.kind = FlowKind.VIOLATION_OFFENDER;
-                    telegram.sendMessage(chatId, t(locale, MessageKey.VIOLATION_OFFENDER),
-                            keyboards.wizard(locale, false));
+                    flowScreen(chatId, telegramId, session.kind,
+                            t(locale, MessageKey.VIOLATION_OFFENDER), keyboards.wizard(locale, false));
                 } else if (action == BotAction.UNKNOWN) {
                     session.put("offender", "");
                     session.kind = FlowKind.VIOLATION_DESCRIPTION;
-                    telegram.sendMessage(chatId, t(locale, MessageKey.VIOLATION_DESCRIPTION),
-                            keyboards.wizard(locale, false));
+                    flowScreen(chatId, telegramId, session.kind,
+                            t(locale, MessageKey.VIOLATION_DESCRIPTION), keyboards.wizard(locale, false));
                 } else {
                     throw new LocalizedUiException(MessageKey.ERROR_INVALID_INPUT);
                 }
             }
             case VIOLATION_OFFENDER -> {
                 session.put("offender", text); session.kind = FlowKind.VIOLATION_DESCRIPTION;
-                telegram.sendMessage(chatId, t(locale, MessageKey.VIOLATION_DESCRIPTION),
-                        keyboards.wizard(locale, false));
+                flowScreen(chatId, telegramId, session.kind,
+                        t(locale, MessageKey.VIOLATION_DESCRIPTION), keyboards.wizard(locale, false));
             }
             case VIOLATION_DESCRIPTION -> {
                 session.put("description", text); session.kind = FlowKind.VIOLATION_ATTACHMENTS;
-                telegram.sendMessage(chatId, t(locale, MessageKey.VIOLATION_ATTACHMENTS),
-                        keyboards.attachmentMenu(locale));
+                flowScreen(chatId, telegramId, session.kind,
+                        t(locale, MessageKey.VIOLATION_ATTACHMENTS), keyboards.attachmentMenu(locale));
             }
             case VIOLATION_ATTACHMENTS ->
                     collectOrSubmit(chatId, telegramId, username, message, session, true, action, locale);
             case ADD_NICKNAME -> {
                 session.put("nickname", text); session.kind = FlowKind.ADD_LICENSE;
-                yesNo(chatId, locale, MessageKey.ADD_LICENSE);
+                yesNo(chatId, telegramId, locale, MessageKey.ADD_LICENSE);
             }
             case ADD_LICENSE -> {
                 session.put("licensed", parseYesNo(action)); session.kind = FlowKind.ADD_CONFIRM;
-                yesNo(chatId, locale, MessageKey.ADD_CONFIRM, session.get("nickname"));
+                yesNo(chatId, telegramId, locale, MessageKey.ADD_CONFIRM, session.get("nickname"));
             }
             case ADD_CONFIRM ->
                     finishAddAccount(chatId, telegramId, username, session, parseYesNo(action), locale);
             case MANUAL_OWNER -> {
                 session.put("ownerId", positiveLong(text)); session.kind = FlowKind.MANUAL_NICKNAME;
-                telegram.sendMessage(chatId, t(locale, MessageKey.MANUAL_NICKNAME),
-                        keyboards.wizard(locale, true));
+                flowScreen(chatId, telegramId, session.kind,
+                        t(locale, MessageKey.MANUAL_NICKNAME), keyboards.wizard(locale, true));
             }
             case MANUAL_NICKNAME -> {
                 session.put("nickname", text); session.kind = FlowKind.MANUAL_LICENSE;
-                yesNoAdmin(chatId, locale, MessageKey.MANUAL_LICENSE);
+                yesNoAdmin(chatId, telegramId, locale, MessageKey.MANUAL_LICENSE);
             }
             case MANUAL_LICENSE -> {
                 session.put("licensed", parseYesNo(action)); session.kind = FlowKind.MANUAL_CONFIRM;
-                yesNoAdmin(chatId, locale, MessageKey.MANUAL_CONFIRM);
+                yesNoAdmin(chatId, telegramId, locale, MessageKey.MANUAL_CONFIRM);
             }
             case MANUAL_CONFIRM ->
                     finishManual(chatId, telegramId, username, session, parseYesNo(action), locale);
@@ -540,13 +558,13 @@ final class TelegramUpdateRouter {
                 ModeratorIdentity moderator = new ModeratorIdentity(telegramId, username);
                 AccountView account = accounts.accountForModerator(
                         moderator, Long.parseLong(session.get("accountId")));
-                showDisableConfirmation(chatId, account, locale);
+                showDisableConfirmation(chatId, telegramId, account, locale);
             }
             case ADMIN_DISABLE_CONFIRM -> throw new LocalizedUiException(MessageKey.ERROR_INVALID_STATE);
             case ADMIN_BOT_BLOCK_REASON -> {
                 session.put("reason", text);
                 session.kind = FlowKind.ADMIN_BOT_BLOCK_CONFIRM;
-                showBotBlockConfirmation(chatId, Long.parseLong(session.get("targetId")),
+                showBotBlockConfirmation(chatId, telegramId, Long.parseLong(session.get("targetId")),
                         session.get("confirmationData"), locale);
             }
             case ADMIN_BOT_BLOCK_CONFIRM -> throw new LocalizedUiException(MessageKey.ERROR_INVALID_STATE);
@@ -557,7 +575,8 @@ final class TelegramUpdateRouter {
                 sessions.remove(telegramId);
                 RemoteCommand queued = commands.create(new ModeratorIdentity(telegramId, username),
                         RemoteCommandType.RESYNC_PLAYER, "{\"accountId\":" + accountId + "}");
-                telegram.sendMessage(chatId, formatCommand(queued, locale), keyboards.serverMenu(locale));
+                adminScreen(telegramId, chatId, "admin:server:command",
+                        formatCommand(queued, locale), keyboards.serverMenu(locale));
             }
         }
     }
@@ -580,6 +599,20 @@ final class TelegramUpdateRouter {
             pendingModeratorActions.clear(telegramId);
             telegram.sendMessage(chatId, t(locale, MessageKey.BOT_ACCESS_RESTRICTED), null);
             telegram.answerCallback(callbackId, t(locale, MessageKey.BOT_ACCESS_RESTRICTED));
+            return;
+        }
+        Long adminNavigationOwner = ui.navigationOwner(
+                chatId, messageId, TelegramUiService.UiType.ADMIN);
+        if (adminNavigationOwner != null && (adminNavigationOwner != telegramId
+                || !ui.owns(telegramId, chatId, TelegramUiService.UiType.ADMIN, messageId))) {
+            telegram.answerCallback(callbackId, t(locale, MessageKey.STALE_ACTION));
+            return;
+        }
+        Long userNavigationOwner = ui.navigationOwner(
+                chatId, messageId, TelegramUiService.UiType.USER);
+        if (userNavigationOwner != null && (userNavigationOwner != telegramId
+                || !ui.owns(telegramId, chatId, TelegramUiService.UiType.USER, messageId))) {
+            telegram.answerCallback(callbackId, t(locale, MessageKey.STALE_ACTION));
             return;
         }
         try {
@@ -626,14 +659,14 @@ final class TelegramUpdateRouter {
                 handleAccountCallback(callbackId, chatId, telegramId, data, locale);
                 return;
             } else if ("server:players".equals(data)) {
-                showPlayerList(chatId, locale);
+                showPlayerList(chatId, telegramId, locale);
             } else if (data.startsWith("players:stats:")) {
                 requireModerator(telegramId);
                 showPlayerStatistics(chatId, new ModeratorIdentity(telegramId, username),
                         Integer.parseInt(data.substring("players:stats:".length())), locale);
             } else if ("nav:requests".equals(data)) {
                 requireModerator(telegramId);
-                telegram.sendMessage(chatId, t(locale, MessageKey.MENU_REQUESTS),
+                adminScreen(telegramId, chatId, "admin:requests", t(locale, MessageKey.MENU_REQUESTS),
                         chatId == adminChatId ? keyboards.requestsInlineMenu(locale) : keyboards.requestsMenu(locale));
             } else if (data.startsWith("admin:list:")) {
                 requireModerator(telegramId);
@@ -645,12 +678,12 @@ final class TelegramUpdateRouter {
                 requireModerator(telegramId);
                 sessions.put(telegramId, new FlowSession(FlowKind.ADMIN_SEARCH));
                 if (!"private".equals(chatType)) {
-                    telegram.sendMessage(telegramId, t(locales.userLocale(telegramId),
+                    adminScreen(telegramId, telegramId, "admin:search", t(locales.userLocale(telegramId),
                             MessageKey.ADMIN_SEARCH_PROMPT),
                             keyboards.wizard(locales.userLocale(telegramId), true));
                 } else {
                     sessions.put(telegramId, new FlowSession(FlowKind.ADMIN_SEARCH));
-                    telegram.sendMessage(chatId, t(locale, MessageKey.ADMIN_SEARCH_PROMPT),
+                    adminScreen(telegramId, chatId, "admin:search", t(locale, MessageKey.ADMIN_SEARCH_PROMPT),
                             keyboards.wizard(locale, true));
                 }
             } else if ("nav:main".equals(data)) {
@@ -662,19 +695,20 @@ final class TelegramUpdateRouter {
                 sessions.remove(telegramId);
                 pendingModeratorActions.clear(telegramId);
                 if (chatId == adminChatId) {
-                    telegram.sendMessage(chatId, t(locale, MessageKey.ADMIN_TITLE),
+                    adminScreen(telegramId, chatId, "admin:main", t(locale, MessageKey.ADMIN_TITLE),
                             keyboards.adminInlineMenu(locale));
                 } else {
-                    telegram.sendMessage(chatId, t(locale, MessageKey.ADMIN_TITLE),
+                    adminScreen(telegramId, chatId, "admin:main", t(locale, MessageKey.ADMIN_TITLE),
                             keyboards.adminMenu(locale));
                 }
             } else if ("remote:force:confirm".equals(data)) {
                 requireModerator(telegramId);
                 RemoteCommand queued = commands.create(new ModeratorIdentity(telegramId, username),
                         RemoteCommandType.FORCE_AUTH_SYNC, "{}");
-                telegram.sendMessage(chatId, formatCommand(queued, locale), keyboards.serverMenu(locale));
+                adminScreen(telegramId, chatId, "admin:server:command",
+                        formatCommand(queued, locale), keyboards.serverMenu(locale));
             } else if ("remote:cancel".equals(data)) {
-                telegram.sendMessage(chatId, t(locale, MessageKey.SERVER_TITLE, serverId),
+                adminScreen(telegramId, chatId, "admin:server", t(locale, MessageKey.SERVER_TITLE, serverId),
                         keyboards.serverMenu(locale));
             } else {
                 throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
@@ -721,7 +755,7 @@ final class TelegramUpdateRouter {
             FlowSession session = new FlowSession(FlowKind.USER_REPLY);
             session.put("ticketId", ticketId);
             sessions.put(telegramId, session);
-            telegram.sendMessage(chatId,
+            userScreen(telegramId, chatId, "user:ticket:reply",
                     t(locale, MessageKey.TICKET_REPLY_PROMPT, Long.toString(ticketId)),
                     keyboards.wizard(locale, false));
         } else {
@@ -741,16 +775,16 @@ final class TelegramUpdateRouter {
                     pendingModeratorActions.beginReply(moderator, ticketId);
                     sessions.remove(telegramId);
                     BotLocale moderatorLocale = locales.userLocale(telegramId);
-                    telegram.sendMessage(telegramId,
+                    adminScreen(telegramId, telegramId, "admin:ticket:reply",
                             t(moderatorLocale, MessageKey.TICKET_REPLY_CONTEXT,
                                     Long.toString(ticketId), formatIdentity(detail.ticket(), moderatorLocale),
                                     ticketMinecraft(detail)),
                             keyboards.wizard(moderatorLocale, true));
                 }
                 case "resolve" -> {
-                    showClosureChoice(chatId, ticketId, TicketStatus.RESOLVED, locale);
+                    showClosureChoice(chatId, moderator, ticketId, TicketStatus.RESOLVED, locale);
                 }
-                case "close" -> showClosureChoice(chatId, ticketId, TicketStatus.CLOSED, locale);
+                case "close" -> showClosureChoice(chatId, moderator, ticketId, TicketStatus.CLOSED, locale);
                 case "resolve_comment" -> beginClosureComment(
                         telegramId, moderator, ticketId, TicketStatus.RESOLVED, locale);
                 case "close_comment" -> beginClosureComment(
@@ -788,7 +822,8 @@ final class TelegramUpdateRouter {
                 .orElseThrow(() -> new WorkflowException(
                         WorkflowException.Code.UNAUTHORIZED, "Account ownership required"));
         if ("password".equals(parts[2])) {
-            telegram.sendMessage(chatId, t(locale, MessageKey.PASSWORD_CONFIRM, account.nickname()),
+            userScreen(telegramId, chatId, "user:password:confirm",
+                    t(locale, MessageKey.PASSWORD_CONFIRM, account.nickname()),
                     keyboards.inline(new String[][]{
                             {t(locale, MessageKey.BUTTON_CONFIRM), "account:" + accountId + ":password_confirm"},
                             {t(locale, MessageKey.BUTTON_CANCEL), "account:" + accountId + ":cancel"},
@@ -814,7 +849,8 @@ final class TelegramUpdateRouter {
             throw new WorkflowException(WorkflowException.Code.UNAUTHORIZED, "Private chat required");
         }
         if (!features.memberTagsEnabled()) {
-            telegram.sendMessage(chatId, t(locale, MessageKey.CHAT_TAG_UNAVAILABLE), keyboards.settingsMenu(locale));
+            userScreen(telegramId, chatId, "user:settings",
+                    t(locale, MessageKey.CHAT_TAG_UNAVAILABLE), keyboards.settingsMenu(locale));
             return;
         }
         if ("chat_tag:open".equals(data)) {
@@ -824,7 +860,7 @@ final class TelegramUpdateRouter {
         if ("chat_tag:none".equals(data)) {
             ChatTagPreference preference = accounts.selectChatTag(telegramId, null);
             synchronizeChatTagSafely(preference);
-            telegram.sendMessage(chatId, t(locale, MessageKey.CHAT_TAG_SAVED,
+            userScreen(telegramId, chatId, "user:chat-tag", t(locale, MessageKey.CHAT_TAG_SAVED,
                     t(locale, MessageKey.CHAT_TAG_NO_TAG)), keyboards.settingsMenu(locale));
             return;
         }
@@ -832,7 +868,7 @@ final class TelegramUpdateRouter {
             long accountId = Long.parseLong(data.substring("chat_tag:account:".length()));
             ChatTagPreference preference = accounts.selectChatTag(telegramId, accountId);
             synchronizeChatTagSafely(preference);
-            telegram.sendMessage(chatId, t(locale, MessageKey.CHAT_TAG_SAVED,
+            userScreen(telegramId, chatId, "user:chat-tag", t(locale, MessageKey.CHAT_TAG_SAVED,
                     preference.minecraftName()), keyboards.settingsMenu(locale));
             return;
         }
@@ -846,7 +882,7 @@ final class TelegramUpdateRouter {
                 buttons.add(new String[]{account.nickname(), "chat_tag:account:" + account.id()}));
         buttons.add(new String[]{t(locale, MessageKey.CHAT_TAG_NO_TAG), "chat_tag:none"});
         buttons.add(new String[]{t(locale, MessageKey.BUTTON_BACK), "nav:main"});
-        telegram.sendMessage(chatId, t(locale, MessageKey.CHAT_TAG_TITLE),
+        userScreen(telegramId, chatId, "user:chat-tag", t(locale, MessageKey.CHAT_TAG_TITLE),
                 keyboards.inline(buttons.toArray(String[][]::new)));
     }
 
@@ -858,7 +894,8 @@ final class TelegramUpdateRouter {
             rejectTicket(chatId, messageId, ticketId, moderator, locale, "");
             return;
         }
-        telegram.sendMessage(chatId, t(locale, MessageKey.TICKET_REJECTION_QUESTION),
+        adminScreen(moderator.telegramId(), chatId, "admin:ticket:rejection",
+                t(locale, MessageKey.TICKET_REJECTION_QUESTION),
                 keyboards.inline(new String[][]{
                         {t(locale, MessageKey.BUTTON_ADD_REASON), "ticket:" + ticketId + ":reject_reason"},
                         {t(locale, MessageKey.BUTTON_REJECT_WITHOUT_REASON),
@@ -928,10 +965,11 @@ final class TelegramUpdateRouter {
     }
 
     private void showClosureChoice(
-            long chatId, long ticketId, TicketStatus target, BotLocale locale)
+            long chatId, ModeratorIdentity moderator, long ticketId, TicketStatus target, BotLocale locale)
             throws IOException, InterruptedException {
         String prefix = target == TicketStatus.CLOSED ? "close" : "resolve";
-        telegram.sendMessage(chatId, t(locale, MessageKey.TICKET_CLOSURE_QUESTION),
+        adminScreen(moderator.telegramId(), chatId, "admin:ticket:closure",
+                t(locale, MessageKey.TICKET_CLOSURE_QUESTION),
                 keyboards.inline(new String[][]{
                         {t(locale, MessageKey.BUTTON_ADD_COMMENT),
                                 "ticket:" + ticketId + ":" + prefix + "_comment"},
@@ -990,7 +1028,7 @@ final class TelegramUpdateRouter {
         BotLocale userLocale = locales.userLocale(detail.ticket().creatorTelegramId());
         MessageKey notification = comment == null || comment.isBlank()
                 ? MessageKey.TICKET_CLOSED_USER : MessageKey.TICKET_CLOSED_USER_WITH_COMMENT;
-        telegram.sendMessage(detail.ticket().creatorTelegramId(),
+        ui.sendPersistentNotice(detail.ticket().creatorTelegramId(),
                 comment == null || comment.isBlank()
                         ? t(userLocale, notification) : t(userLocale, notification, comment), null);
         if (messageId > 0) {
@@ -1017,14 +1055,16 @@ final class TelegramUpdateRouter {
             case "disable" -> {
                 AccountView account = accounts.accountForModerator(moderator, accountId);
                 if (!account.enabled()) {
-                    telegram.sendMessage(chatId, t(locale, MessageKey.ACCOUNT_ALREADY_DISABLED,
+                    adminScreen(telegramId, chatId, "admin:account:" + accountId,
+                            t(locale, MessageKey.ACCOUNT_ALREADY_DISABLED,
                             account.nickname()), accountAdminKeyboard(account, locale));
                 } else {
                     FlowSession session = new FlowSession(FlowKind.ADMIN_DISABLE_REASON);
                     session.put("accountId", accountId);
                     session.put("reason", "");
                     sessions.put(telegramId, session);
-                    telegram.sendMessage(chatId, t(locale, MessageKey.ACCOUNT_DISABLE_REASON,
+                    adminScreen(telegramId, chatId, "admin:account:disable-reason",
+                            t(locale, MessageKey.ACCOUNT_DISABLE_REASON,
                             account.nickname()), keyboards.inline(new String[][]{
                             {t(locale, MessageKey.BUTTON_SKIP), "admin-account:" + accountId + ":disable_skip"},
                             {t(locale, MessageKey.BUTTON_CANCEL), "admin-account:" + accountId + ":disable_cancel"},
@@ -1036,7 +1076,8 @@ final class TelegramUpdateRouter {
                 FlowSession session = requireDisableSession(telegramId, accountId);
                 session.put("reason", "");
                 session.kind = FlowKind.ADMIN_DISABLE_CONFIRM;
-                showDisableConfirmation(chatId, accounts.accountForModerator(moderator, accountId), locale);
+                showDisableConfirmation(chatId, telegramId,
+                        accounts.accountForModerator(moderator, accountId), locale);
             }
             case "disable_confirm" -> {
                 FlowSession session = requireDisableSession(telegramId, accountId);
@@ -1045,9 +1086,9 @@ final class TelegramUpdateRouter {
                 if (result.changed()) {
                     synchronizeChatTagSafely(accounts.chatTagPreference(result.account().ownerTelegramId()));
                 }
-                sendAccountStateResult(chatId, result, false, locale);
+                sendAccountStateResult(chatId, moderator, result, false, locale);
             }
-            case "enable" -> sendAccountStateResult(chatId,
+            case "enable" -> sendAccountStateResult(chatId, moderator,
                     accounts.enable(moderator, accountId, ""), true, locale);
             case "bot_block" -> {
                 AccountView account = accounts.accountForModerator(moderator, accountId);
@@ -1056,7 +1097,8 @@ final class TelegramUpdateRouter {
                 session.put("confirmationData", "admin-account:" + accountId + ":bot_block_confirm");
                 session.put("reason", "");
                 sessions.put(telegramId, session);
-                telegram.sendMessage(chatId, t(locale, MessageKey.BOT_BLOCK_REASON), keyboards.inline(new String[][]{
+                adminScreen(telegramId, chatId, "admin:bot-block:reason",
+                        t(locale, MessageKey.BOT_BLOCK_REASON), keyboards.inline(new String[][]{
                         {t(locale, MessageKey.BUTTON_SKIP), "admin-account:" + accountId + ":bot_block_skip"},
                         {t(locale, MessageKey.BUTTON_CANCEL), "admin-account:" + accountId + ":view"}}));
             }
@@ -1064,12 +1106,13 @@ final class TelegramUpdateRouter {
                 AccountView account = accounts.accountForModerator(moderator, accountId);
                 FlowSession session = requireBotBlockSession(telegramId, account.ownerTelegramId());
                 session.kind = FlowKind.ADMIN_BOT_BLOCK_CONFIRM;
-                showBotBlockConfirmation(chatId, account.ownerTelegramId(),
+                showBotBlockConfirmation(chatId, telegramId, account.ownerTelegramId(),
                         "admin-account:" + accountId + ":bot_block_confirm", locale);
             }
             case "bot_unblock" -> {
                 AccountView account = accounts.accountForModerator(moderator, accountId);
-                telegram.sendMessage(chatId, t(locale, MessageKey.BOT_UNBLOCK_CONFIRM,
+                adminScreen(telegramId, chatId, "admin:bot-unblock:confirm",
+                        t(locale, MessageKey.BOT_UNBLOCK_CONFIRM,
                         Long.toString(account.ownerTelegramId())), keyboards.inline(new String[][]{
                         {t(locale, MessageKey.BUTTON_CONFIRM), "admin-account:" + accountId + ":bot_unblock_confirm"},
                         {t(locale, MessageKey.BUTTON_CANCEL), "admin-account:" + accountId + ":view"}}));
@@ -1082,7 +1125,8 @@ final class TelegramUpdateRouter {
                 TelegramUserModerationService.ChangeResult result = userModeration.setBlocked(
                         moderator, account.ownerTelegramId(), blocked, reason);
                 sessions.remove(telegramId);
-                telegram.sendMessage(chatId, t(locale, blocked ? MessageKey.BOT_BLOCKED_DONE
+                adminScreen(telegramId, chatId, "admin:account:" + accountId,
+                        t(locale, blocked ? MessageKey.BOT_BLOCKED_DONE
                         : MessageKey.BOT_UNBLOCKED_DONE, Long.toString(result.targetTelegramId())),
                         accountAdminKeyboard(account, locale));
             }
@@ -1112,7 +1156,8 @@ final class TelegramUpdateRouter {
                 session.put("confirmationData", "admin-user:" + targetId + ":bot_block_confirm");
                 session.put("reason", "");
                 sessions.put(telegramId, session);
-                telegram.sendMessage(promptChat, t(promptLocale, MessageKey.BOT_BLOCK_REASON),
+                adminScreen(telegramId, promptChat, "admin:bot-block:reason",
+                        t(promptLocale, MessageKey.BOT_BLOCK_REASON),
                         keyboards.inline(new String[][]{
                                 {t(promptLocale, MessageKey.BUTTON_SKIP),
                                         "admin-user:" + targetId + ":bot_block_skip"},
@@ -1121,10 +1166,10 @@ final class TelegramUpdateRouter {
             case "bot_block_skip" -> {
                 FlowSession session = requireBotBlockSession(telegramId, targetId);
                 session.kind = FlowKind.ADMIN_BOT_BLOCK_CONFIRM;
-                showBotBlockConfirmation(promptChat, targetId,
+                showBotBlockConfirmation(promptChat, telegramId, targetId,
                         "admin-user:" + targetId + ":bot_block_confirm", promptLocale);
             }
-            case "bot_unblock" -> telegram.sendMessage(promptChat,
+            case "bot_unblock" -> adminScreen(telegramId, promptChat, "admin:bot-unblock:confirm",
                     t(promptLocale, MessageKey.BOT_UNBLOCK_CONFIRM, Long.toString(targetId)),
                     keyboards.inline(new String[][]{
                             {t(promptLocale, MessageKey.BUTTON_CONFIRM),
@@ -1136,7 +1181,8 @@ final class TelegramUpdateRouter {
                 TelegramUserModerationService.ChangeResult result = userModeration.setBlocked(
                         moderator, targetId, blocked, reason);
                 sessions.remove(telegramId);
-                telegram.sendMessage(promptChat, t(promptLocale, blocked ? MessageKey.BOT_BLOCKED_DONE
+                adminScreen(telegramId, promptChat, "admin:main",
+                        t(promptLocale, blocked ? MessageKey.BOT_BLOCKED_DONE
                                 : MessageKey.BOT_UNBLOCKED_DONE, Long.toString(result.targetTelegramId())),
                         keyboards.adminMenu(promptLocale));
             }
@@ -1158,7 +1204,8 @@ final class TelegramUpdateRouter {
         switch (parts[2]) {
             case "start" -> {
                 pendingModeratorActions.beginUserBanReason(moderator, targetId);
-                telegram.sendMessage(chatId, t(locale, MessageKey.BAN_REASON_PROMPT),
+                adminScreen(telegramId, chatId, "admin:ban:reason",
+                        t(locale, MessageKey.BAN_REASON_PROMPT),
                         keyboards.wizard(locale, true));
             }
             case "only", "linked" -> {
@@ -1166,7 +1213,7 @@ final class TelegramUpdateRouter {
                 BanService.BanResult result = bans.banUser(moderator, targetId, session.get("reason"),
                         "linked".equals(parts[2]));
                 sessions.remove(telegramId);
-                telegram.sendMessage(chatId, t(locale, MessageKey.BAN_COMPLETED,
+                adminScreen(telegramId, chatId, "admin:main", t(locale, MessageKey.BAN_COMPLETED,
                         Long.toString(result.originBanId()), Integer.toString(result.linkedBanIds().size()),
                         Integer.toString(result.affectedAccountCount())), keyboards.adminMenu(locale));
             }
@@ -1175,12 +1222,13 @@ final class TelegramUpdateRouter {
                 if (banId == null) throw new WorkflowException(WorkflowException.Code.NOT_FOUND, "Active ban not found");
                 int removed = bans.unban(moderator, banId, "Moderator Telegram action",
                         "unban_group".equals(parts[2]));
-                telegram.sendMessage(chatId, t(locale, MessageKey.UNBAN_COMPLETED,
+                adminScreen(telegramId, chatId, "admin:main", t(locale, MessageKey.UNBAN_COMPLETED,
                         Integer.toString(removed)), keyboards.adminMenu(locale));
             }
             case "cancel" -> {
                 sessions.remove(telegramId);
-                telegram.sendMessage(chatId, t(locale, MessageKey.ACTION_CANCELLED), keyboards.adminMenu(locale));
+                adminScreen(telegramId, chatId, "admin:main",
+                        t(locale, MessageKey.ACTION_CANCELLED), keyboards.adminMenu(locale));
             }
             default -> throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
         }
@@ -1201,35 +1249,37 @@ final class TelegramUpdateRouter {
             case "view" -> showAdminDevice(chatId, moderator, deviceId, locale);
             case "ban" -> {
                 pendingModeratorActions.beginDeviceBanReason(moderator, deviceId);
-                telegram.sendMessage(chatId, t(locale, MessageKey.DEVICE_BAN_REASON_PROMPT,
+                adminScreen(telegramId, chatId, "admin:device:ban-reason",
+                        t(locale, MessageKey.DEVICE_BAN_REASON_PROMPT,
                         Long.toString(deviceId)), keyboards.wizard(locale, true));
             }
             case "ban_confirm" -> {
                 FlowSession session = requireBanSession(telegramId, FlowKind.ADMIN_DEVICE_BAN_CONFIRM, deviceId);
                 long banId = bans.banDevice(moderator, deviceId, session.get("reason"));
                 sessions.remove(telegramId);
-                telegram.sendMessage(chatId, t(locale, MessageKey.DEVICE_BAN_COMPLETED,
+                adminScreen(telegramId, chatId, "admin:main", t(locale, MessageKey.DEVICE_BAN_COMPLETED,
                         Long.toString(banId)), keyboards.adminMenu(locale));
             }
             case "unban" -> {
                 Long banId = bans.activeDeviceBanId(moderator, deviceId);
                 if (banId == null) throw new WorkflowException(WorkflowException.Code.NOT_FOUND, "Active ban not found");
                 bans.unban(moderator, banId, "Moderator Telegram action", false);
-                telegram.sendMessage(chatId, t(locale, MessageKey.DEVICE_UNBAN_COMPLETED),
+                adminScreen(telegramId, chatId, "admin:main", t(locale, MessageKey.DEVICE_UNBAN_COMPLETED),
                         keyboards.adminMenu(locale));
             }
             case "exempt" -> {
                 if (parts.length != 4) throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
                 long userId = Long.parseLong(parts[3]);
                 bans.createExemption(moderator, userId, deviceId, "Confirmed shared-PC exemption");
-                telegram.sendMessage(chatId, t(locale, MessageKey.EXEMPTION_COMPLETED,
+                adminScreen(telegramId, chatId, "admin:main", t(locale, MessageKey.EXEMPTION_COMPLETED,
                         Long.toString(userId), Long.toString(deviceId)), keyboards.adminMenu(locale));
             }
             case "unexempt" -> {
                 if (parts.length != 4) throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
                 long userId = Long.parseLong(parts[3]);
                 bans.removeExemption(moderator, userId, deviceId, "Moderator Telegram action");
-                telegram.sendMessage(chatId, t(locale, MessageKey.CALLBACK_DONE), keyboards.adminMenu(locale));
+                adminScreen(telegramId, chatId, "admin:main",
+                        t(locale, MessageKey.CALLBACK_DONE), keyboards.adminMenu(locale));
             }
             default -> throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
         }
@@ -1265,18 +1315,21 @@ final class TelegramUpdateRouter {
         return session;
     }
 
-    private void showBotBlockConfirmation(long chatId, long targetTelegramId,
+    private void showBotBlockConfirmation(long chatId, long moderatorTelegramId, long targetTelegramId,
                                           String confirmationData, BotLocale locale)
             throws IOException, InterruptedException {
-        telegram.sendMessage(chatId, t(locale, MessageKey.BOT_BLOCK_CONFIRM,
+        adminScreen(moderatorTelegramId, chatId, "admin:bot-block:confirm",
+                t(locale, MessageKey.BOT_BLOCK_CONFIRM,
                 Long.toString(targetTelegramId)), keyboards.inline(new String[][]{
                 {t(locale, MessageKey.BUTTON_CONFIRM), confirmationData},
                 {t(locale, MessageKey.BUTTON_CANCEL), "nav:admin"}}));
     }
 
-    private void showDisableConfirmation(long chatId, AccountView account, BotLocale locale)
+    private void showDisableConfirmation(
+            long chatId, long moderatorTelegramId, AccountView account, BotLocale locale)
             throws IOException, InterruptedException {
-        telegram.sendMessage(chatId, t(locale, MessageKey.ACCOUNT_DISABLE_CONFIRM, account.nickname()),
+        adminScreen(moderatorTelegramId, chatId, "admin:account:disable-confirm",
+                t(locale, MessageKey.ACCOUNT_DISABLE_CONFIRM, account.nickname()),
                 keyboards.inline(new String[][]{
                         {t(locale, MessageKey.BUTTON_DISABLE_ACCOUNT),
                                 "admin-account:" + account.id() + ":disable_confirm"},
@@ -1286,7 +1339,8 @@ final class TelegramUpdateRouter {
     }
 
     private void sendAccountStateResult(
-            long chatId, AccountStateChangeResult result, boolean enabled, BotLocale locale)
+            long chatId, ModeratorIdentity moderator, AccountStateChangeResult result,
+            boolean enabled, BotLocale locale)
             throws IOException, InterruptedException {
         MessageKey key = result.changed()
                 ? (enabled ? MessageKey.ACCOUNT_ENABLED_DONE : MessageKey.ACCOUNT_DISABLED_DONE)
@@ -1295,10 +1349,11 @@ final class TelegramUpdateRouter {
                 ? t(locale, key, result.account().nickname(),
                         localization.formatInstant(locale, result.occurredAt()))
                 : t(locale, key, result.account().nickname());
-        telegram.sendMessage(chatId, text, accountAdminKeyboard(result.account(), locale));
+        adminScreen(moderator.telegramId(), chatId, "admin:account:" + result.account().id(),
+                text, accountAdminKeyboard(result.account(), locale));
         if (result.changed()) {
             BotLocale ownerLocale = locales.userLocale(result.account().ownerTelegramId());
-            telegram.sendMessage(result.account().ownerTelegramId(), t(ownerLocale,
+            ui.sendPersistentNotice(result.account().ownerTelegramId(), t(ownerLocale,
                     enabled ? MessageKey.ACCOUNT_ENABLED_USER : MessageKey.ACCOUNT_DISABLED_USER,
                     result.account().nickname()), null);
         }
@@ -1319,14 +1374,15 @@ final class TelegramUpdateRouter {
             char[] password = result.copyInitialPassword();
             try {
                 BotLocale userLocale = locales.userLocale(result.creatorTelegramId());
-                telegram.sendHtmlMessage(result.creatorTelegramId(), passwordMessage(userLocale,
-                        MessageKey.TICKET_APPROVED_USER, new String(password), result.nickname()), null);
+                ui.sendSensitiveSecret(result.creatorTelegramId(), passwordMessage(userLocale,
+                        MessageKey.TICKET_APPROVED_USER, new String(password), result.nickname()));
             } finally {
                 Arrays.fill(password, '\0');
             }
             telegram.editMessage(chatId, messageId,
                     t(adminLocale, MessageKey.TICKET_ADMIN_TERMINAL,
                             Long.toString(ticketId), ticketStatus(adminLocale, TicketStatus.RESOLVED)));
+            showAdminTicket(chatId, moderator, ticketId, adminLocale);
         }
     }
 
@@ -1355,33 +1411,38 @@ final class TelegramUpdateRouter {
             tickets.transition(ticketId, moderator, TicketStatus.REJECTED);
         }
         BotLocale userLocale = locales.userLocale(detail.ticket().creatorTelegramId());
-        telegram.sendMessage(detail.ticket().creatorTelegramId(),
+        ui.sendPersistentNotice(detail.ticket().creatorTelegramId(),
                 reason == null || reason.isBlank()
                         ? t(userLocale, MessageKey.TICKET_REJECTED_USER, Long.toString(ticketId))
                         : t(userLocale, MessageKey.TICKET_REJECTED_USER_WITH_REASON, reason), null);
-        telegram.editMessage(chatId, messageId,
-                t(adminLocale, MessageKey.TICKET_ADMIN_TERMINAL,
-                        Long.toString(ticketId), ticketStatus(adminLocale, TicketStatus.REJECTED)));
+        if (messageId > 0) {
+            telegram.editMessage(chatId, messageId,
+                    t(adminLocale, MessageKey.TICKET_ADMIN_TERMINAL,
+                            Long.toString(ticketId), ticketStatus(adminLocale, TicketStatus.REJECTED)));
+        }
+        showAdminTicket(chatId, moderator, ticketId, adminLocale);
     }
 
     private void beginRegistration(
             long chatId, long telegramId, String username, BotLocale locale)
             throws IOException, InterruptedException {
         if (accounts.hasEnabledAccount(telegramId)) {
-            telegram.sendMessage(chatId, t(locale, MessageKey.REG_ALREADY_REGISTERED),
+            userScreen(telegramId, chatId, "user:registration:already-registered",
+                    t(locale, MessageKey.REG_ALREADY_REGISTERED),
                     keyboards.userMenu(locale, true, moderators.isEnabled(telegramId)));
             return;
         }
         var pending = tickets.pendingRegistration(telegramId);
         if (pending.isPresent()) {
-            telegram.sendMessage(chatId,
+            userScreen(telegramId, chatId, "user:registration:pending",
                     t(locale, MessageKey.REG_STATUS_PENDING, Long.toString(pending.get().id()),
                             ticketStatus(locale, pending.get().status())),
                     keyboards.userMenu(locale, false, moderators.isEnabled(telegramId)));
             return;
         }
         sessions.put(telegramId, new FlowSession(FlowKind.REG_NICKNAME));
-        telegram.sendMessage(chatId, t(locale, MessageKey.REG_NICKNAME), keyboards.wizard(locale, false));
+        userScreen(telegramId, chatId, "user:flow:reg_nickname",
+                t(locale, MessageKey.REG_NICKNAME), keyboards.wizard(locale, false));
     }
 
     private void beginRegistrationWithSubscriptionGate(
@@ -1393,7 +1454,7 @@ final class TelegramUpdateRouter {
             return;
         }
         if (!features.subscriptionCheckAvailable()) {
-            showSubscriptionGate(chatId, locale, MessageKey.SUBSCRIPTION_UNAVAILABLE, false);
+            showSubscriptionGate(chatId, telegramId, locale, MessageKey.SUBSCRIPTION_UNAVAILABLE, false);
             return;
         }
         try {
@@ -1401,14 +1462,15 @@ final class TelegramUpdateRouter {
                     == TelegramMembership.SUBSCRIBED) {
                 beginRegistration(chatId, telegramId, username, locale);
             } else {
-                showSubscriptionGate(chatId, locale, MessageKey.SUBSCRIPTION_REQUIRED, true);
+                showSubscriptionGate(chatId, telegramId, locale, MessageKey.SUBSCRIPTION_REQUIRED, true);
             }
         } catch (IOException exception) {
-            showSubscriptionGate(chatId, locale, MessageKey.SUBSCRIPTION_UNAVAILABLE, false);
+            showSubscriptionGate(chatId, telegramId, locale, MessageKey.SUBSCRIPTION_UNAVAILABLE, false);
         }
     }
 
-    private void showSubscriptionGate(long chatId, BotLocale locale, MessageKey message, boolean allowSubscribe)
+    private void showSubscriptionGate(
+            long chatId, long telegramId, BotLocale locale, MessageKey message, boolean allowSubscribe)
             throws IOException, InterruptedException {
         List<String[]> buttons = new ArrayList<>();
         if (allowSubscribe && features.subscriptionChannelUrl() != null) {
@@ -1417,7 +1479,8 @@ final class TelegramUpdateRouter {
         buttons.add(new String[]{t(locale, MessageKey.BUTTON_CHECK_SUBSCRIPTION),
                 "registration:subscription:retry"});
         buttons.add(new String[]{t(locale, MessageKey.BUTTON_MAIN_MENU), "nav:main"});
-        telegram.sendMessage(chatId, t(locale, message), keyboards.inline(buttons.toArray(String[][]::new)));
+        userScreen(telegramId, chatId, "user:registration:subscription", t(locale, message),
+                keyboards.inline(buttons.toArray(String[][]::new)));
     }
 
     private void finishRegistration(
@@ -1433,9 +1496,9 @@ final class TelegramUpdateRouter {
                 Boolean.parseBoolean(session.get("licensed")),
                 Integer.parseInt(session.get("age")), session.get("experience")));
         sessions.remove(telegramId);
-        telegram.sendMessage(chatId,
-                t(locale, MessageKey.REG_SUBMITTED, Long.toString(ticketId)),
-                keyboards.userMenu(locale, false, moderators.isEnabled(telegramId)));
+        ui.sendPersistentNotice(chatId,
+                t(locale, MessageKey.REG_SUBMITTED, Long.toString(ticketId)), null);
+        showMainMenu(chatId, telegramId, MessageKey.MAIN_CHOOSE_ACTION);
 
         TicketDetail detail = tickets.ticketForUser(telegramId, ticketId);
         BotLocale adminLocale = locales.adminLocale();
@@ -1455,7 +1518,7 @@ final class TelegramUpdateRouter {
             session.put("accountId", owned.getFirst().id());
             session.kind = kind == FlowKind.PROBLEM_ACCOUNT
                     ? FlowKind.PROBLEM_DESCRIPTION : FlowKind.VIOLATION_OFFENDER_KNOWN;
-            telegram.sendMessage(chatId,
+            flowScreen(chatId, telegramId, session.kind,
                     t(locale, kind == FlowKind.PROBLEM_ACCOUNT
                             ? MessageKey.PROBLEM_DESCRIPTION : MessageKey.VIOLATION_OFFENDER_KNOWN),
                     kind == FlowKind.PROBLEM_ACCOUNT
@@ -1463,7 +1526,8 @@ final class TelegramUpdateRouter {
         } else {
             MessageKey key = kind == FlowKind.PROBLEM_ACCOUNT
                     ? MessageKey.PROBLEM_SELECT_ACCOUNT : MessageKey.VIOLATION_SELECT_ACCOUNT;
-            telegram.sendMessage(chatId, t(locale, key, formatAccounts(owned, locale)),
+            flowScreen(chatId, telegramId, session.kind,
+                    t(locale, key, formatAccounts(owned, locale)),
                     keyboards.wizard(locale, false));
         }
     }
@@ -1480,12 +1544,14 @@ final class TelegramUpdateRouter {
                     : tickets.createProblem(telegramId, username, accountId,
                             session.get("description"), session.attachments);
             sessions.remove(telegramId);
-            showMainMenu(chatId, telegramId, MessageKey.TICKET_SUBMITTED, Long.toString(ticketId));
+            ui.sendPersistentNotice(chatId,
+                    t(locale, MessageKey.TICKET_SUBMITTED, Long.toString(ticketId)), null);
+            showMainMenu(chatId, telegramId, MessageKey.MAIN_CHOOSE_ACTION);
             postSupportTicket(ticketId, telegramId);
             return;
         }
         if (action == BotAction.ADD_ATTACHMENT) {
-            telegram.sendMessage(chatId, t(locale, MessageKey.ATTACHMENT_SEND),
+            flowScreen(chatId, telegramId, session.kind, t(locale, MessageKey.ATTACHMENT_SEND),
                     keyboards.attachmentMenu(locale));
             return;
         }
@@ -1493,7 +1559,7 @@ final class TelegramUpdateRouter {
         if (attachment == null) throw new LocalizedUiException(MessageKey.ATTACHMENT_INVALID);
         if (session.attachments.size() >= 10) throw new LocalizedUiException(MessageKey.ATTACHMENT_LIMIT);
         session.attachments.add(attachment);
-        telegram.sendMessage(chatId,
+        flowScreen(chatId, telegramId, session.kind,
                 t(locale, MessageKey.ATTACHMENT_ADDED, Integer.toString(session.attachments.size())),
                 keyboards.attachmentMenu(locale));
     }
@@ -1510,7 +1576,9 @@ final class TelegramUpdateRouter {
                 telegramId, username, session.get("nickname"),
                 Boolean.parseBoolean(session.get("licensed")));
         sessions.remove(telegramId);
-        showMainMenu(chatId, telegramId, MessageKey.TICKET_SUBMITTED, Long.toString(ticketId));
+        ui.sendPersistentNotice(chatId,
+                t(locale, MessageKey.TICKET_SUBMITTED, Long.toString(ticketId)), null);
+        showMainMenu(chatId, telegramId, MessageKey.MAIN_CHOOSE_ACTION);
         postSupportTicket(ticketId, telegramId);
     }
 
@@ -1519,8 +1587,8 @@ final class TelegramUpdateRouter {
             boolean confirmed, BotLocale locale) throws IOException, InterruptedException {
         if (!confirmed) {
             sessions.remove(telegramId);
-            telegram.sendMessage(chatId, t(locale, MessageKey.MANUAL_CANCELLED),
-                    keyboards.adminMenu(locale));
+            adminScreen(telegramId, chatId, "admin:main",
+                    t(locale, MessageKey.MANUAL_CANCELLED), keyboards.adminMenu(locale));
             return;
         }
         long ownerId = Long.parseLong(session.get("ownerId"));
@@ -1531,25 +1599,25 @@ final class TelegramUpdateRouter {
             char[] password = result.copyPassword();
             try {
                 BotLocale ownerLocale = locales.userLocale(ownerId);
-                telegram.sendHtmlMessage(ownerId, passwordMessage(ownerLocale,
-                        MessageKey.CREDENTIAL_CREATED, new String(password), result.nickname()), null);
+                ui.sendSensitiveSecret(ownerId, passwordMessage(ownerLocale,
+                        MessageKey.CREDENTIAL_CREATED, new String(password), result.nickname()));
             } finally {
                 Arrays.fill(password, '\0');
             }
-            telegram.sendMessage(chatId, t(locale, MessageKey.MANUAL_CREATED),
-                    keyboards.adminMenu(locale));
+            adminScreen(telegramId, chatId, "admin:main",
+                    t(locale, MessageKey.MANUAL_CREATED), keyboards.adminMenu(locale));
         }
     }
 
-    private void showLanguageSelector(long chatId) throws IOException, InterruptedException {
-        telegram.sendMessage(chatId,
+    private void showLanguageSelector(long chatId, long telegramId) throws IOException, InterruptedException {
+        userScreen(telegramId, chatId, "user:language",
                 t(BotLocale.ENGLISH, MessageKey.LANGUAGE_CHOOSE), keyboards.languageSelector());
     }
 
     private void showMainMenu(long chatId, long telegramId, MessageKey message, Object... arguments)
             throws IOException, InterruptedException {
         BotLocale locale = locales.userLocale(telegramId);
-        telegram.sendMessage(chatId, t(locale, message, arguments),
+        userScreen(telegramId, chatId, "user:main", t(locale, message, arguments),
                 keyboards.userMenu(locale, accounts.hasEnabledAccount(telegramId),
                         moderators.isEnabled(telegramId)));
     }
@@ -1558,7 +1626,8 @@ final class TelegramUpdateRouter {
             throws IOException, InterruptedException {
         BotLocale locale = locales.userLocale(telegramId);
         if (moderators.isEnabled(telegramId)) {
-            telegram.sendMessage(chatId, t(locale, message, arguments), keyboards.adminMenu(locale));
+            adminScreen(telegramId, chatId, "admin:main",
+                    t(locale, message, arguments), keyboards.adminMenu(locale));
         } else {
             showMainMenu(chatId, telegramId, message, arguments);
         }
@@ -1614,7 +1683,7 @@ final class TelegramUpdateRouter {
                     "admin-device:" + deviceId + ":view"});
             buttons.add(new String[]{t(locale, MessageKey.BUTTON_CANCEL),
                     "admin-ban:" + pending.targetId() + ":cancel"});
-            telegram.sendMessage(chatId, t(locale, MessageKey.BAN_IMPACT,
+            adminScreen(telegramId, chatId, "admin:ban:impact", t(locale, MessageKey.BAN_IMPACT,
                     Long.toString(impact.targetUserId()), text,
                     Integer.toString(impact.ownAccountCount()), Integer.toString(impact.deviceIds().size()),
                     Integer.toString(impact.directlyLinkedUserIds().size()),
@@ -1633,7 +1702,8 @@ final class TelegramUpdateRouter {
             session.put("reason", text);
             sessions.put(telegramId, session);
             pendingModeratorActions.clear(telegramId);
-            telegram.sendMessage(chatId, t(locale, MessageKey.DEVICE_BAN_REASON_PROMPT,
+            adminScreen(telegramId, chatId, "admin:device:ban-confirm",
+                    t(locale, MessageKey.DEVICE_BAN_REASON_PROMPT,
                     Long.toString(pending.targetId())), keyboards.inline(new String[][]{
                     {t(locale, MessageKey.BUTTON_CONFIRM),
                             "admin-device:" + pending.targetId() + ":ban_confirm"},
@@ -1649,12 +1719,12 @@ final class TelegramUpdateRouter {
         pendingModeratorActions.clear(telegramId);
         TicketDetail detail = tickets.ticketForModerator(moderator, pending.ticketId());
         BotLocale userLocale = locales.userLocale(detail.ticket().creatorTelegramId());
-        telegram.sendMessage(detail.ticket().creatorTelegramId(),
+        ui.sendPersistentNotice(detail.ticket().creatorTelegramId(),
                 t(userLocale, MessageKey.TICKET_REPLY_FOR_USER,
                         Long.toString(pending.ticketId()), text),
                 keyboards.inline(new String[][]{{t(userLocale, MessageKey.BUTTON_REPLY),
                         "ticket:" + pending.ticketId() + ":user_reply"}}));
-        telegram.sendMessage(chatId,
+        adminScreen(telegramId, chatId, "admin:ticket:reply-complete",
                 t(locale, MessageKey.TICKET_REPLY_SENT, Long.toString(pending.ticketId())),
                 keyboards.inline(new String[][]{
                         {t(locale, MessageKey.BUTTON_BACK), "ticket:" + pending.ticketId() + ":refresh"},
@@ -1671,34 +1741,34 @@ final class TelegramUpdateRouter {
         }
         switch (session.kind) {
             case REG_LICENSE -> { session.kind = FlowKind.REG_NICKNAME;
-                telegram.sendMessage(chatId, t(locale, MessageKey.REG_NICKNAME), keyboards.wizard(locale, false)); }
-            case REG_AGE -> { session.kind = FlowKind.REG_LICENSE; yesNo(chatId, locale, MessageKey.REG_LICENSE); }
+                flowScreen(chatId, telegramId, session.kind, t(locale, MessageKey.REG_NICKNAME), keyboards.wizard(locale, false)); }
+            case REG_AGE -> { session.kind = FlowKind.REG_LICENSE; yesNo(chatId, telegramId, locale, MessageKey.REG_LICENSE); }
             case REG_EXPERIENCE -> { session.kind = FlowKind.REG_AGE;
-                telegram.sendMessage(chatId, t(locale, MessageKey.REG_AGE), keyboards.wizard(locale, false)); }
+                flowScreen(chatId, telegramId, session.kind, t(locale, MessageKey.REG_AGE), keyboards.wizard(locale, false)); }
             case REG_CONFIRM -> { session.kind = FlowKind.REG_EXPERIENCE;
-                telegram.sendMessage(chatId, t(locale, MessageKey.REG_EXPERIENCE), keyboards.wizard(locale, false)); }
+                flowScreen(chatId, telegramId, session.kind, t(locale, MessageKey.REG_EXPERIENCE), keyboards.wizard(locale, false)); }
             case PROBLEM_DESCRIPTION -> { session.kind = FlowKind.PROBLEM_ACCOUNT;
-                telegram.sendMessage(chatId, t(locale, MessageKey.PROBLEM_SELECT_ACCOUNT,
+                flowScreen(chatId, telegramId, session.kind, t(locale, MessageKey.PROBLEM_SELECT_ACCOUNT,
                         formatAccounts(requireRegistered(telegramId), locale)), keyboards.wizard(locale, false)); }
             case PROBLEM_ATTACHMENTS -> { session.kind = FlowKind.PROBLEM_DESCRIPTION;
-                telegram.sendMessage(chatId, t(locale, MessageKey.PROBLEM_DESCRIPTION), keyboards.wizard(locale, false)); }
+                flowScreen(chatId, telegramId, session.kind, t(locale, MessageKey.PROBLEM_DESCRIPTION), keyboards.wizard(locale, false)); }
             case VIOLATION_OFFENDER_KNOWN -> { session.kind = FlowKind.VIOLATION_ACCOUNT;
-                telegram.sendMessage(chatId, t(locale, MessageKey.VIOLATION_SELECT_ACCOUNT,
+                flowScreen(chatId, telegramId, session.kind, t(locale, MessageKey.VIOLATION_SELECT_ACCOUNT,
                         formatAccounts(requireRegistered(telegramId), locale)), keyboards.wizard(locale, false)); }
             case VIOLATION_OFFENDER -> { session.kind = FlowKind.VIOLATION_OFFENDER_KNOWN;
-                telegram.sendMessage(chatId, t(locale, MessageKey.VIOLATION_OFFENDER_KNOWN), keyboards.offenderKnown(locale)); }
+                flowScreen(chatId, telegramId, session.kind, t(locale, MessageKey.VIOLATION_OFFENDER_KNOWN), keyboards.offenderKnown(locale)); }
             case VIOLATION_DESCRIPTION -> { session.kind = FlowKind.VIOLATION_OFFENDER_KNOWN;
-                telegram.sendMessage(chatId, t(locale, MessageKey.VIOLATION_OFFENDER_KNOWN), keyboards.offenderKnown(locale)); }
+                flowScreen(chatId, telegramId, session.kind, t(locale, MessageKey.VIOLATION_OFFENDER_KNOWN), keyboards.offenderKnown(locale)); }
             case VIOLATION_ATTACHMENTS -> { session.kind = FlowKind.VIOLATION_DESCRIPTION;
-                telegram.sendMessage(chatId, t(locale, MessageKey.VIOLATION_DESCRIPTION), keyboards.wizard(locale, false)); }
+                flowScreen(chatId, telegramId, session.kind, t(locale, MessageKey.VIOLATION_DESCRIPTION), keyboards.wizard(locale, false)); }
             case ADD_LICENSE -> { session.kind = FlowKind.ADD_NICKNAME;
-                telegram.sendMessage(chatId, t(locale, MessageKey.ADD_NICKNAME), keyboards.wizard(locale, false)); }
-            case ADD_CONFIRM -> { session.kind = FlowKind.ADD_LICENSE; yesNo(chatId, locale, MessageKey.ADD_LICENSE); }
+                flowScreen(chatId, telegramId, session.kind, t(locale, MessageKey.ADD_NICKNAME), keyboards.wizard(locale, false)); }
+            case ADD_CONFIRM -> { session.kind = FlowKind.ADD_LICENSE; yesNo(chatId, telegramId, locale, MessageKey.ADD_LICENSE); }
             case MANUAL_NICKNAME -> { session.kind = FlowKind.MANUAL_OWNER;
-                telegram.sendMessage(chatId, t(locale, MessageKey.MANUAL_OWNER), keyboards.wizard(locale, true)); }
+                flowScreen(chatId, telegramId, session.kind, t(locale, MessageKey.MANUAL_OWNER), keyboards.wizard(locale, true)); }
             case MANUAL_LICENSE -> { session.kind = FlowKind.MANUAL_NICKNAME;
-                telegram.sendMessage(chatId, t(locale, MessageKey.MANUAL_NICKNAME), keyboards.wizard(locale, true)); }
-            case MANUAL_CONFIRM -> { session.kind = FlowKind.MANUAL_LICENSE; yesNoAdmin(chatId, locale, MessageKey.MANUAL_LICENSE); }
+                flowScreen(chatId, telegramId, session.kind, t(locale, MessageKey.MANUAL_NICKNAME), keyboards.wizard(locale, true)); }
+            case MANUAL_CONFIRM -> { session.kind = FlowKind.MANUAL_LICENSE; yesNoAdmin(chatId, telegramId, locale, MessageKey.MANUAL_LICENSE); }
             case SERVER_INFORMATION -> {
                 sessions.remove(telegramId);
                 showMainMenu(chatId, telegramId, MessageKey.MAIN_CHOOSE_ACTION);
@@ -1717,15 +1787,15 @@ final class TelegramUpdateRouter {
             case "server_info:how_to_play" -> showHowToPlay(chatId, telegramId, locale);
             case "server_info:modpack" -> {
                 if (features.modpackDownloadUrl() == null) throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
-                showModpackDownload(chatId, locale);
+                showModpackDownload(chatId, telegramId, locale);
             }
             case "server_info:map" -> {
                 if (features.serverMapUrl() == null) throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
-                showServerMap(chatId, locale);
+                showServerMap(chatId, telegramId, locale);
             }
             case "server_info:status" -> {
                 if (!features.serverStatusEnabled()) throw new LocalizedUiException(MessageKey.ERROR_UNKNOWN_ACTION);
-                showServerStatus(chatId, locale);
+                showServerStatus(chatId, telegramId, locale);
             }
             case "server_info:back" -> {
                 sessions.remove(telegramId);
@@ -1744,19 +1814,22 @@ final class TelegramUpdateRouter {
             buttons.add(new String[]{t(locale, MessageKey.HOW_TO_PLAY_GUIDE), howToPlayUrl});
         }
         buttons.add(new String[]{t(locale, MessageKey.BUTTON_MAIN_MENU), "nav:main"});
-        telegram.sendMessage(chatId, features.howToPlay(locale, t(locale, MessageKey.HOW_TO_PLAY)),
+        userScreen(telegramId, chatId, "user:how-to-play",
+                features.howToPlay(locale, t(locale, MessageKey.HOW_TO_PLAY)),
                 keyboards.inline(buttons.toArray(String[][]::new)));
     }
 
-    private void showServerMap(long chatId, BotLocale locale) throws IOException, InterruptedException {
-        telegram.sendMessage(chatId, t(locale, MessageKey.SERVER_MAP_OPEN),
+    private void showServerMap(long chatId, long telegramId, BotLocale locale)
+            throws IOException, InterruptedException {
+        userScreen(telegramId, chatId, "user:server-map", t(locale, MessageKey.SERVER_MAP_OPEN),
                 keyboards.inline(new String[][]{
                         {t(locale, MessageKey.MENU_SERVER_MAP), features.serverMapUrl()},
                         {t(locale, MessageKey.BUTTON_MAIN_MENU), "nav:main"}}));
     }
 
-    private void showModpackDownload(long chatId, BotLocale locale) throws IOException, InterruptedException {
-        telegram.sendMessage(chatId, t(locale, MessageKey.MODPACK_DOWNLOAD_OPEN),
+    private void showModpackDownload(long chatId, long telegramId, BotLocale locale)
+            throws IOException, InterruptedException {
+        userScreen(telegramId, chatId, "user:modpack", t(locale, MessageKey.MODPACK_DOWNLOAD_OPEN),
                 keyboards.inline(new String[][]{
                         {t(locale, MessageKey.MENU_MODPACK_DOWNLOAD), features.modpackDownloadUrl()},
                         {t(locale, MessageKey.BUTTON_MAIN_MENU), "nav:main"}}));
@@ -1769,7 +1842,7 @@ final class TelegramUpdateRouter {
         String identity = username == null || username.isBlank()
                 ? t(locale, MessageKey.TICKET_NO_USERNAME, Long.toString(telegramId))
                 : t(locale, MessageKey.TICKET_IDENTITY, Long.toString(telegramId), username);
-        telegram.sendMessage(chatId,
+        userScreen(telegramId, chatId, "user:account",
                 t(locale, MessageKey.ACCOUNT_LIST, identity, formatAccounts(owned, locale)),
                 keyboards.accountMenu(locale));
     }
@@ -1782,7 +1855,8 @@ final class TelegramUpdateRouter {
                 .toArray(String[][]::new)));
         buttons.add(new String[]{t(locale, MessageKey.BUTTON_BACK), "nav:main"});
         buttons.add(new String[]{t(locale, MessageKey.BUTTON_MAIN_MENU), "nav:main"});
-        telegram.sendMessage(chatId, t(locale, MessageKey.ACCOUNT_SELECT_PASSWORD),
+        userScreen(telegramId, chatId, "user:password:select",
+                t(locale, MessageKey.ACCOUNT_SELECT_PASSWORD),
                 keyboards.inline(buttons.toArray(String[][]::new)));
     }
 
@@ -1798,7 +1872,8 @@ final class TelegramUpdateRouter {
             buttons.add(new String[]{account.nickname(), "account:" + account.id() + ":playtime"});
         }
         buttons.add(new String[]{t(locale, MessageKey.BUTTON_BACK), "nav:main"});
-        telegram.sendMessage(chatId, t(locale, MessageKey.PLAYTIME_SELECT),
+        userScreen(telegramId, chatId, "user:playtime:select",
+                t(locale, MessageKey.PLAYTIME_SELECT),
                 keyboards.inline(buttons.toArray(String[][]::new)));
     }
 
@@ -1806,14 +1881,16 @@ final class TelegramUpdateRouter {
             throws IOException, InterruptedException {
         if (telemetry == null) throw new LocalizedUiException(MessageKey.ERROR_INVALID_STATE);
         ServerTelemetryService.Playtime value = telemetry.playtime(telegramId, accountId);
-        telegram.sendMessage(chatId, t(locale, MessageKey.PLAYTIME_SUMMARY, value.nickname(),
+        userScreen(telegramId, chatId, "user:playtime:detail",
+                t(locale, MessageKey.PLAYTIME_SUMMARY, value.nickname(),
                 LocalizedDurationFormatter.format(value.last24Hours(), locale),
                 LocalizedDurationFormatter.format(value.last7Days(), locale),
                 LocalizedDurationFormatter.format(value.allTime(), locale)), keyboards.inline(new String[][]{
                 {t(locale, MessageKey.BUTTON_BACK), "nav:main"}}));
     }
 
-    private void showServerStatus(long chatId, BotLocale locale) throws IOException, InterruptedException {
+    private void showServerStatus(long chatId, long telegramId, BotLocale locale)
+            throws IOException, InterruptedException {
         if (telemetry == null) throw new LocalizedUiException(MessageKey.ERROR_INVALID_STATE);
         ServerTelemetryService.ServerStatus status = telemetry.status(serverId);
         String text;
@@ -1831,13 +1908,15 @@ final class TelegramUpdateRouter {
             buttons.add(new String[]{t(locale, MessageKey.BUTTON_PLAYER_LIST), "server:players"});
         }
         buttons.add(new String[]{t(locale, MessageKey.BUTTON_BACK), "nav:main"});
-        telegram.sendMessage(chatId, text, keyboards.inline(buttons.toArray(String[][]::new)));
+        userScreen(telegramId, chatId, "user:server-status", text,
+                keyboards.inline(buttons.toArray(String[][]::new)));
     }
 
-    private void showPlayerList(long chatId, BotLocale locale) throws IOException, InterruptedException {
+    private void showPlayerList(long chatId, long telegramId, BotLocale locale)
+            throws IOException, InterruptedException {
         if (telemetry == null) throw new LocalizedUiException(MessageKey.ERROR_INVALID_STATE);
         ServerTelemetryService.ServerStatus status = telemetry.status(serverId);
-        if (!status.online()) { showServerStatus(chatId, locale); return; }
+        if (!status.online()) { showServerStatus(chatId, telegramId, locale); return; }
         List<ServerTelemetryService.OnlinePlayer> players = telemetry.onlinePlayers(serverId);
         MessageKey heading = players.isEmpty() && status.onlinePlayers() > 0
                 ? MessageKey.PLAYER_LIST_UNAVAILABLE
@@ -1849,7 +1928,7 @@ final class TelegramUpdateRouter {
             text.append('\n').append(t(locale, MessageKey.PLAYER_LIST_ROW,
                     player.nickname(), duration).stripTrailing());
         }
-        telegram.sendMessage(chatId, text.toString(), keyboards.inline(new String[][]{
+        userScreen(telegramId, chatId, "user:server-players", text.toString(), keyboards.inline(new String[][]{
                 {t(locale, MessageKey.BUTTON_BACK), "nav:main"}}));
     }
 
@@ -1875,7 +1954,8 @@ final class TelegramUpdateRouter {
         if (page > 0) buttons.add(new String[]{t(locale, MessageKey.BUTTON_PREVIOUS), "players:stats:" + (page - 1)});
         if (values.size() == 10) buttons.add(new String[]{t(locale, MessageKey.BUTTON_NEXT), "players:stats:" + (page + 1)});
         buttons.add(new String[]{t(locale, MessageKey.BUTTON_ADMIN_MENU), "nav:admin"});
-        telegram.sendMessage(chatId, text.toString(), keyboards.inline(buttons.toArray(String[][]::new)));
+        adminScreen(moderator.telegramId(), chatId, "admin:player-statistics:" + page,
+                text.toString(), keyboards.inline(buttons.toArray(String[][]::new)));
     }
 
     private void showMyTickets(long chatId, long telegramId, int requestedPage, BotLocale locale)
@@ -1904,7 +1984,7 @@ final class TelegramUpdateRouter {
         buttons.add(new String[]{t(locale, MessageKey.BUTTON_MAIN_MENU), "nav:main"});
         text.append(t(locale, MessageKey.TICKET_PAGE,
                 Integer.toString(page + 1), Integer.toString(pages)));
-        telegram.sendMessage(chatId, text.toString(),
+        userScreen(telegramId, chatId, "user:tickets:" + page, text.toString(),
                 keyboards.inline(buttons.toArray(String[][]::new)));
     }
 
@@ -1918,7 +1998,7 @@ final class TelegramUpdateRouter {
         }
         buttons.add(new String[]{t(locale, MessageKey.BUTTON_BACK), "tickets:page:0"});
         buttons.add(new String[]{t(locale, MessageKey.BUTTON_MAIN_MENU), "nav:main"});
-        telegram.sendMessage(chatId, formatTicket(detail, locale),
+        userScreen(telegramId, chatId, "user:ticket:" + ticketId, formatTicket(detail, locale),
                 keyboards.inline(buttons.toArray(String[][]::new)));
     }
 
@@ -1965,12 +2045,21 @@ final class TelegramUpdateRouter {
             if (page > 0) navigation.add(new String[]{t(locale, MessageKey.BUTTON_PREVIOUS),
                     "admin:list:" + filter + ":" + (page - 1)});
             navigation.add(new String[]{t(locale, MessageKey.BUTTON_ADMIN_MENU), "nav:admin"});
-            telegram.sendMessage(chatId, t(locale, MessageKey.ADMIN_NO_TICKETS),
+            adminScreen(moderator.telegramId(), chatId, "admin:tickets:" + filter + ":" + page,
+                    t(locale, MessageKey.ADMIN_NO_TICKETS),
                     keyboards.inline(navigation.toArray(String[][]::new)));
             return;
         }
-        for (TicketListItem item : items) showAdminTicket(chatId, moderator, item.id(), locale);
+        StringBuilder pageText = new StringBuilder();
+        for (TicketListItem item : items) {
+            if (!pageText.isEmpty()) pageText.append("\n\n");
+            pageText.append(formatTicket(tickets.ticketForModerator(moderator, item.id()), locale));
+        }
         List<String[]> navigation = new ArrayList<>();
+        for (TicketListItem item : items) {
+            navigation.add(new String[]{"#" + item.id() + " · " + ticketType(locale, item.type()),
+                    "ticket:" + item.id() + ":refresh"});
+        }
         if (page > 0) navigation.add(new String[]{t(locale, MessageKey.BUTTON_PREVIOUS),
                 "admin:list:" + filter + ":" + (page - 1)});
         if (items.size() == SupportTicketService.PAGE_SIZE) {
@@ -1978,8 +2067,9 @@ final class TelegramUpdateRouter {
                     "admin:list:" + filter + ":" + (page + 1)});
         }
         navigation.add(new String[]{t(locale, MessageKey.BUTTON_ADMIN_MENU), "nav:admin"});
-        telegram.sendMessage(chatId, t(locale, MessageKey.ADMIN_PAGE,
-                        Integer.toString(page + 1)),
+        pageText.append("\n\n").append(t(locale, MessageKey.ADMIN_PAGE, Integer.toString(page + 1)));
+        adminScreen(moderator.telegramId(), chatId, "admin:tickets:" + filter + ":" + page,
+                pageText.toString(),
                 keyboards.inline(navigation.toArray(String[][]::new)));
     }
 
@@ -1989,7 +2079,8 @@ final class TelegramUpdateRouter {
         TicketDetail detail = tickets.ticketForModerator(moderator, ticketId);
         boolean approvable = detail.ticket().type() == TicketType.REGISTRATION
                 || detail.ticket().type() == TicketType.ADD_MINECRAFT_ACCOUNT;
-        telegram.sendMessage(chatId, formatTicket(detail, locale),
+        adminScreen(moderator.telegramId(), chatId, "admin:ticket:" + ticketId,
+                formatTicket(detail, locale),
                 adminTicketKeyboard(detail.ticket(), moderator.telegramId(), approvable, locale));
     }
 
@@ -1999,12 +2090,34 @@ final class TelegramUpdateRouter {
         List<TicketListItem> results = tickets.search(moderator, query);
         List<AccountView> accountResults = accounts.search(moderator, query);
         if (results.isEmpty() && accountResults.isEmpty()) {
-            telegram.sendMessage(chatId, t(locale, MessageKey.ADMIN_NOTHING_FOUND),
-                    keyboards.adminMenu(locale));
+            adminScreen(moderator.telegramId(), chatId, "admin:search:empty",
+                    t(locale, MessageKey.ADMIN_NOTHING_FOUND), keyboards.adminMenu(locale));
             return;
         }
-        for (TicketListItem item : results) showAdminTicket(chatId, moderator, item.id(), locale);
-        for (AccountView account : accountResults) showAdminAccount(chatId, moderator, account.id(), locale);
+        if (!accountResults.isEmpty()) {
+            showAdminAccount(chatId, moderator, accountResults.getFirst().id(), locale);
+            return;
+        }
+        if (results.size() == 1) {
+            showAdminTicket(chatId, moderator, results.getFirst().id(), locale);
+            return;
+        }
+        List<String[]> buttons = new ArrayList<>();
+        StringBuilder text = new StringBuilder();
+        for (TicketListItem result : results) {
+            if (!text.isEmpty()) text.append('\n');
+            text.append('#').append(result.id()).append(" · ").append(ticketType(locale, result.type()));
+            buttons.add(new String[]{"#" + result.id(), "ticket:" + result.id() + ":refresh"});
+        }
+        for (AccountView account : accountResults) {
+            if (!text.isEmpty()) text.append('\n');
+            text.append(account.nickname());
+            buttons.add(new String[]{t(locale, MessageKey.BUTTON_VIEW_ACCOUNT) + " #" + account.id(),
+                    "admin-account:" + account.id() + ":view"});
+        }
+        buttons.add(new String[]{t(locale, MessageKey.BUTTON_ADMIN_MENU), "nav:admin"});
+        adminScreen(moderator.telegramId(), chatId, "admin:search:results", text.toString(),
+                keyboards.inline(buttons.toArray(String[][]::new)));
     }
 
     private void showAdminAccount(
@@ -2013,7 +2126,8 @@ final class TelegramUpdateRouter {
         AccountView account = accounts.accountForModerator(moderator, accountId);
         String identity = formatIdentity(account.ownerTelegramId(),
                 accounts.telegramUsername(account.ownerTelegramId()), locale);
-        telegram.sendMessage(chatId, t(locale, MessageKey.ACCOUNT_ADMIN_DETAILS,
+        adminScreen(moderator.telegramId(), chatId, "admin:account:" + accountId,
+                t(locale, MessageKey.ACCOUNT_ADMIN_DETAILS,
                 account.nickname(), identity,
                 t(locale, account.enabled() ? MessageKey.ACCOUNT_ENABLED : MessageKey.ACCOUNT_DISABLED),
                 Integer.toString(account.credentialVersion()),
@@ -2039,7 +2153,8 @@ final class TelegramUpdateRouter {
                     "admin-account:" + accountId + ":view"});
         }
         buttons.add(new String[]{t(locale, MessageKey.BUTTON_BACK), "nav:admin"});
-        telegram.sendMessage(chatId, t(locale, MessageKey.DEVICE_DETAILS,
+        adminScreen(moderator.telegramId(), chatId, "admin:device:" + deviceId,
+                t(locale, MessageKey.DEVICE_DETAILS,
                 Long.toString(device.id()), Integer.toString(device.fingerprintVersion()),
                 localization.formatInstant(locale, device.firstSeen()),
                 localization.formatInstant(locale, device.lastSeen()), device.confidence().name(),
@@ -2126,6 +2241,40 @@ final class TelegramUpdateRouter {
         return keyboards.inline(buttons.toArray(String[][]::new));
     }
 
+    private long userScreen(
+            long telegramId, long chatId, String screenId, String text, JsonNode replyMarkup)
+            throws IOException, InterruptedException {
+        return ui.renderNavigation(telegramId, chatId, TelegramUiService.UiType.USER,
+                screenId, text, replyMarkup);
+    }
+
+    private long adminScreen(
+            long moderatorTelegramId, long chatId, String screenId, String text, JsonNode replyMarkup)
+            throws IOException, InterruptedException {
+        return ui.renderNavigation(moderatorTelegramId, chatId, TelegramUiService.UiType.ADMIN,
+                screenId, text, replyMarkup);
+    }
+
+    private long flowScreen(
+            long chatId, long telegramId, FlowKind kind, String text, JsonNode replyMarkup)
+            throws IOException, InterruptedException {
+        String screenId = (isAdminFlow(kind) ? "admin:flow:" : "user:flow:")
+                + kind.name().toLowerCase(Locale.ROOT);
+        return isAdminFlow(kind)
+                ? adminScreen(telegramId, chatId, screenId, text, replyMarkup)
+                : userScreen(telegramId, chatId, screenId, text, replyMarkup);
+    }
+
+    private static boolean isAdminFlow(FlowKind kind) {
+        return switch (kind) {
+            case MANUAL_OWNER, MANUAL_NICKNAME, MANUAL_LICENSE, MANUAL_CONFIRM,
+                    ADMIN_SEARCH, ADMIN_DISABLE_REASON, ADMIN_DISABLE_CONFIRM,
+                    ADMIN_BOT_BLOCK_REASON, ADMIN_BOT_BLOCK_CONFIRM,
+                    ADMIN_USER_BAN_CONFIRM, ADMIN_DEVICE_BAN_CONFIRM, RESYNC_ACCOUNT -> true;
+            default -> false;
+        };
+    }
+
     private List<AccountView> requireRegistered(long telegramId) {
         List<AccountView> owned = accounts.accountsFor(telegramId);
         if (owned.isEmpty()) {
@@ -2144,9 +2293,9 @@ final class TelegramUpdateRouter {
             throws IOException, InterruptedException {
         char[] password = result.copyPassword();
         try {
-            telegram.sendHtmlMessage(chatId, passwordMessage(locale, MessageKey.PASSWORD_CHANGED,
+            ui.sendSensitiveSecret(chatId, passwordMessage(locale, MessageKey.PASSWORD_CHANGED,
                     new String(password), result.nickname(),
-                    Integer.toString(result.credentialVersion())), null);
+                    Integer.toString(result.credentialVersion())));
         } finally {
             Arrays.fill(password, '\0');
         }
@@ -2165,14 +2314,16 @@ final class TelegramUpdateRouter {
         return TelegramPasswordFormatter.format(t(locale, key, arguments), password);
     }
 
-    private void yesNo(long chatId, BotLocale locale, MessageKey prompt, Object... arguments)
+    private void yesNo(long chatId, long telegramId, BotLocale locale, MessageKey prompt, Object... arguments)
             throws IOException, InterruptedException {
-        telegram.sendMessage(chatId, t(locale, prompt, arguments), keyboards.yesNo(locale));
+        userScreen(telegramId, chatId, "user:confirmation", t(locale, prompt, arguments),
+                keyboards.yesNo(locale));
     }
 
-    private void yesNoAdmin(long chatId, BotLocale locale, MessageKey prompt, Object... arguments)
+    private void yesNoAdmin(long chatId, long telegramId, BotLocale locale, MessageKey prompt, Object... arguments)
             throws IOException, InterruptedException {
-        telegram.sendMessage(chatId, t(locale, prompt, arguments), keyboards.yesNo(locale, true));
+        adminScreen(telegramId, chatId, "admin:confirmation", t(locale, prompt, arguments),
+                keyboards.yesNo(locale, true));
     }
 
     private String formatAccounts(List<AccountView> accountViews, BotLocale locale) {

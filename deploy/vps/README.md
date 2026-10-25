@@ -128,7 +128,7 @@ Developer PC
 
 ```bash
 sudo /opt/minecraft-auth-tools/update.sh \
-  /home/authbot/uploads/auth-backend-0.6.5.tar.gz
+  /home/authbot/uploads/auth-backend-0.6.6.tar.gz
 ```
 
 Либо передайте распакованный `installDist`:

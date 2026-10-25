@@ -92,11 +92,26 @@ final class TelegramApiClient implements TelegramClient {
 
     @Override
     public void editMessage(long chatId, long messageId, String text) throws IOException, InterruptedException {
+        editMessage(chatId, messageId, text, null);
+    }
+
+    @Override
+    public void editMessage(long chatId, long messageId, String text, JsonNode replyMarkup)
+            throws IOException, InterruptedException {
         ObjectNode body = json.createObjectNode();
         body.put("chat_id", chatId);
         body.put("message_id", messageId);
         body.put("text", text);
+        if (replyMarkup != null) body.set("reply_markup", replyMarkup);
         call("editMessageText", body);
+    }
+
+    @Override
+    public void deleteMessage(long chatId, long messageId) throws IOException, InterruptedException {
+        ObjectNode body = json.createObjectNode();
+        body.put("chat_id", chatId);
+        body.put("message_id", messageId);
+        call("deleteMessage", body);
     }
 
     @Override
@@ -134,19 +149,37 @@ final class TelegramApiClient implements TelegramClient {
                 .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(body)))
                 .build();
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() / 100 != 2) {
-            throw new TelegramApiException("Telegram request failed with HTTP " + response.statusCode());
-        }
         JsonNode parsed = json.readTree(response.body());
+        if (response.statusCode() / 100 != 2) {
+            throw new TelegramApiException(response.statusCode(),
+                    parsed.path("description").asText("Telegram request failed"));
+        }
         if (!parsed.path("ok").asBoolean(false)) {
-            throw new TelegramApiException("Telegram rejected the request");
+            throw new TelegramApiException(parsed.path("error_code").asInt(0),
+                    parsed.path("description").asText("Telegram rejected the request"));
         }
         return parsed;
     }
 
     static final class TelegramApiException extends IOException {
+        private final int errorCode;
+
         TelegramApiException(String message) {
+            this(0, message);
+        }
+
+        TelegramApiException(int errorCode, String message) {
             super(message);
+            this.errorCode = errorCode;
+        }
+
+        int errorCode() {
+            return errorCode;
+        }
+
+        boolean isMessageNotModified() {
+            return getMessage() != null
+                    && getMessage().toLowerCase(java.util.Locale.ROOT).contains("message is not modified");
         }
     }
 }

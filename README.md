@@ -4,7 +4,7 @@
 
 MCTGAuth is a Java 21 authentication and support system for Minecraft 1.21.1 on NeoForge 21.1.244. A Telegram bot manages registration, account ownership, tickets, moderation, and password rotation; separate client and dedicated-server mods perform replay-resistant login without transmitting the plaintext password.
 
-Current version: **0.6.5**.
+Current supported combination: **backend 0.6.6 + client/server mods 0.6.5**.
 
 ## Architecture
 
@@ -36,6 +36,8 @@ Version 0.6.4 adds opt-in Telegram member tags sourced from an owned Minecraft a
 
 Version 0.6.5 adds privacy-conscious device fingerprints, moderator-confirmed direct linked-device bans, explicit device bans, safe unban/exemption workflows, and offline enforcement for previously known banned devices. It moves authentication wire protocol to 2 and backend schema to 8. Raw hardware identifiers are never stored by the backend. See the [0.6.5 release notes](docs/RELEASE_NOTES_0.6.5.md).
 
+Backend 0.6.6 adds single-message Telegram navigation while retaining the 0.6.5 Minecraft mods, protocol 2, schema 8, and fingerprint format 1. Upgrade a complete 0.6.5 stack; 0.6.4 mods are unsupported. See the [backend 0.6.6 release notes](docs/RELEASE_NOTES_BACKEND_0.6.6.md) and [two-stage migration guide](docs/MIGRATION_0.6.5_TO_BACKEND_0.6.6.md).
+
 The client password is intentionally stored as plaintext in its dedicated local JSON configuration. The backend and Minecraft server never store that plaintext. No component may log passwords, API tokens, Authorization headers, verifier material, or reusable proofs.
 
 ## Modules
@@ -54,7 +56,7 @@ The client password is intentionally stored as plaintext in its dedicated local 
 2. An authorized moderator, identified by numeric Telegram ID, approves it.
 3. The backend creates an Argon2id verifier and a versioned sync event. The generated plaintext is delivered only to the user.
 4. MCTGAuth Server durably applies the event to `mctgauth/accounts.json`, then acknowledges it.
-5. Client and server negotiate protocol version 1. The server issues a one-use session and nonce; the client derives a key locally and returns a context-bound HMAC proof.
+5. Client and server negotiate protocol version 2. The server issues a one-use session and nonce; the client derives a key locally and returns a context-bound HMAC proof and versioned device signals.
 6. The server consumes the challenge, validates identity and credential version, and releases the player only after success.
 
 See the [authentication protocol](docs/AUTH_PROTOCOL.md) and [end-to-end flow](docs/MCTGAUTH_AUTH_FLOW.md).
@@ -77,13 +79,13 @@ On Linux/macOS use `./gradlew`. For backend development, copy the examples from 
 ## Release artifacts
 
 ```text
-auth-backend/build/distributions/auth-backend-0.6.5.tar.gz
+auth-backend/build/distributions/auth-backend-0.6.6.tar.gz
 auth-neoforge-server/build/libs/mctgauth-server-0.6.5.jar
 auth-neoforge-client/build/libs/mctgauth-client-0.6.5.jar
 ```
 
 ```powershell
-.\gradlew.bat :auth-backend:deploymentArchive :auth-neoforge-server:build :auth-neoforge-client:build
+.\gradlew.bat :auth-backend:test :auth-backend:deploymentArchive
 ```
 
 Generated binaries belong in release assets, not in the source commit.
@@ -105,6 +107,8 @@ Generated binaries belong in release assets, not in the source commit.
 - [0.6.4 release notes](docs/RELEASE_NOTES_0.6.4.md) · [Russian](docs/RELEASE_NOTES_0.6.4_RU.md)
 - [Upgrade from 0.6.4 to 0.6.5](docs/MIGRATION_0.6.4_TO_0.6.5.md) · [Russian](docs/MIGRATION_0.6.4_TO_0.6.5_RU.md)
 - [0.6.5 release notes](docs/RELEASE_NOTES_0.6.5.md) · [Russian](docs/RELEASE_NOTES_0.6.5_RU.md)
+- [Backend 0.6.6 release notes](docs/RELEASE_NOTES_BACKEND_0.6.6.md) · [Russian](docs/RELEASE_NOTES_BACKEND_0.6.6_RU.md)
+- [Two-stage upgrade to backend 0.6.6](docs/MIGRATION_0.6.5_TO_BACKEND_0.6.6.md) · [Russian](docs/MIGRATION_0.6.5_TO_BACKEND_0.6.6_RU.md)
 - [Telemetry API](docs/api/TELEMETRY_API.md) · [Russian](docs/api/TELEMETRY_API_RU.md)
 - [Architecture and ownership](docs/PROJECT_LOGIC.md)
 - [Security model](docs/architecture/SECURITY_MODEL.md)

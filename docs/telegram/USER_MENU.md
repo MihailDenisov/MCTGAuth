@@ -2,6 +2,8 @@
 
 The bot uses persistent reply keyboards for top-level navigation and stable inline callback identifiers for ticket, account, and locale actions. Visible translated text is never a domain or authorization identifier. `/start`, `/register`, `/tickets`, and `/account` remain language-independent fallback commands.
 
+Backend 0.6.6 keeps one transient navigation message for each numeric Telegram user, chat, and user-UI context. Menus, Back, pagination, ticket/account selection, registration steps, and confirmation screens edit that message. If Telegram can no longer edit it, the bot sends exactly one replacement and records the replacement as active. Password output and persistent ticket/registration notifications are standalone messages and are never reused as navigation.
+
 `/menu` resets transient state and always opens the ordinary user-facing private menu, including for moderators. `/adm` is the dedicated administration entry point. `/cancel` cancels the current wizard without deleting submitted tickets; an administrative wizard returns to the administration menu. Every submenu or wizard provides localized Back, Cancel where applicable, and Main menu navigation.
 
 ## Initial language selection

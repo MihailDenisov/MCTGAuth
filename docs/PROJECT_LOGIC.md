@@ -154,3 +154,7 @@ Version 0.6.5 models devices, Telegram users, and Minecraft accounts as many-to-
 User and device bans are explicit moderator actions with reason, actor numeric Telegram ID, timestamps, audit records, and sync events. A linked-user operation starts from the target user's directly observed devices and expands exactly one hop; it never traverses a linked user's other devices. Shared-PC exemptions affect linked expansion but never override an explicit device ban. Ban state stays separate from ordinary account enablement.
 
 After a valid credential proof, the login session enters `DEVICE_PENDING`; device resolution runs off the Minecraft thread. Success requires both proof and device policy. The local schema-2 cache enforces known user/device bans during backend outages. Unknown devices follow the explicit outage policy, defaulting to availability for valid cached accounts.
+
+## 20. Backend 0.6.6 Telegram navigation
+
+Telegram navigation is an in-memory projection keyed by numeric Telegram user ID, chat ID, and user/admin UI type. Ordinary screens edit one active message and recover a missing or stale message with one replacement. Password output and persistent business notifications are always standalone and never become navigation state. SQLite remains authoritative for tickets, moderation, bans, and ownership; UI state never authorizes or finalizes a business transition.

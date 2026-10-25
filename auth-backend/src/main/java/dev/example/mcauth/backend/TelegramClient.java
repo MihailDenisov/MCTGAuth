@@ -25,6 +25,13 @@ interface TelegramClient {
         return sendMessage(chatId, html, replyMarkup);
     }
     void editMessage(long chatId, long messageId, String text) throws IOException, InterruptedException;
+    default void editMessage(long chatId, long messageId, String text, JsonNode replyMarkup)
+            throws IOException, InterruptedException {
+        editMessage(chatId, messageId, text);
+    }
+    default void deleteMessage(long chatId, long messageId) throws IOException, InterruptedException {
+        throw new UnsupportedOperationException("Telegram message deletion is unavailable");
+    }
     void answerCallback(String callbackQueryId, String text) throws IOException, InterruptedException;
     void sendAttachment(long chatId, AttachmentReference attachment) throws IOException, InterruptedException;
 }

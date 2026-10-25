@@ -2,7 +2,7 @@
 
 [Русская версия](README_RU.md) · [Project home](../README.md)
 
-This index separates operator-facing guides from design references. The current release targets Java 21, Minecraft 1.21.1, NeoForge 21.1.244, and MCTGAuth 0.6.5.
+This index separates operator-facing guides from design references. The current combination is backend 0.6.6 with MCTGAuth client/server 0.6.5, protocol 2, and schema 8.
 
 ## Start here
 
@@ -24,6 +24,8 @@ This index separates operator-facing guides from design references. The current 
 - [Upgrade from 0.6.3 to 0.6.4](MIGRATION_0.6.3_TO_0.6.4.md)
 - [0.6.5 release notes](RELEASE_NOTES_0.6.5.md)
 - [Upgrade from 0.6.4 to 0.6.5](MIGRATION_0.6.4_TO_0.6.5.md)
+- [Backend 0.6.6 release notes](RELEASE_NOTES_BACKEND_0.6.6.md)
+- [Two-stage upgrade to backend 0.6.6](MIGRATION_0.6.5_TO_BACKEND_0.6.6.md)
 - [Telemetry API](api/TELEMETRY_API.md)
 - [0.4.2 release notes](RELEASE_NOTES_0.4.2.md)
 
@@ -37,7 +39,7 @@ This index separates operator-facing guides from design references. The current 
 
 ## Interfaces and workflows
 
-- [Authentication protocol V1](AUTH_PROTOCOL.md)
+- [Authentication protocol V2](AUTH_PROTOCOL.md)
 - [Authentication flow](MCTGAUTH_AUTH_FLOW.md)
 - [Sync HTTP API](api/SYNC_API.md)
 - [Remote-command HTTP API](api/REMOTE_COMMAND_API.md)

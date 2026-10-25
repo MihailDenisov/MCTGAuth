@@ -1,4 +1,4 @@
-# MCTGAuth backend 0.6.5
+# MCTGAuth backend 0.6.6
 
 [English version](README.md)
 
